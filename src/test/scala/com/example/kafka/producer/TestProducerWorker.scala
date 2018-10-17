@@ -80,8 +80,8 @@ class TestProducerWorker extends LazyLogging {
     val records = this.consumeFromBeginning(testTopicName)
     logger.debug(records.mkString("\n"))
 
-    kafkaProducer.close()
     Assert.assertThat(records.length, is(testTopicRecordSetCount))
+    kafkaProducer.close()
   }
 
   @Test
@@ -127,8 +127,8 @@ class TestProducerWorker extends LazyLogging {
     val records = this.consumeFromBeginning(testTopicName)
     logger.debug(records.mkString("\n"))
 
-    kafkaProducer.close()
     Assert.assertThat(records.length, is(testTopicRecordSetCount))
+    kafkaProducer.close()
   }
 
   @Test

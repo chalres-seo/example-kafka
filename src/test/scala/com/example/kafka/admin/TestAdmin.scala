@@ -107,6 +107,10 @@ class TestAdmin extends LazyLogging {
 
     kafkaAdmin.deleteAllTopics().get
 
+    if (kafkaAdmin.getTopicNameList.get.size() != 0) {
+      kafkaAdmin.getTopicNameList.get.foreach(println)
+    }
+
     Assert.assertThat(kafkaAdmin.getTopicNameList.get.size(), is(0))
   }
 }

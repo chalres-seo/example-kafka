@@ -2,19 +2,15 @@ package com.example.kafka.consumer
 
 import java.time.Duration
 import java.util
-import java.util.Collections
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.{ExecutorService, Executors, LinkedBlockingQueue}
 
 import com.example.kafka.metrics.KafkaMetrics
-import com.example.kafka.producer.ProducerWorker
 import com.typesafe.scalalogging.LazyLogging
-import org.apache.kafka.clients.consumer.{ConsumerRecord, ConsumerRecords, OffsetAndMetadata, OffsetCommitCallback, OffsetResetStrategy, Consumer => IKafkaConsumer}
-import org.apache.kafka.clients.producer.RecordMetadata
+import org.apache.kafka.clients.consumer.{ConsumerRecords, OffsetAndMetadata, OffsetCommitCallback, OffsetResetStrategy, Consumer => IKafkaConsumer}
 import org.apache.kafka.common.serialization.Deserializer
-import org.apache.kafka.common.{Metric, MetricName, PartitionInfo, TopicPartition}
+import org.apache.kafka.common.{Metric, MetricName, TopicPartition}
 
-import scala.collection.{immutable, mutable}
 import scala.collection.mutable.ListBuffer
 import scala.concurrent.{ExecutionContext, ExecutionContextExecutor, Future}
 import scala.concurrent.duration.TimeUnit
@@ -43,37 +39,36 @@ class ConsumerWorker[K, V](kafkaConsumer: IKafkaConsumer[K, V],
   private val workerIsRunning: AtomicBoolean = new AtomicBoolean(false)
   private val workerIsShutDown: AtomicBoolean = new AtomicBoolean(false)
 
-  private val workerFutureThreadList = ListBuffer.empty[Thread]
-  private val workerFutureList = ListBuffer.empty[Future[Unit]]
+  private val workerFuture = new Array[Future[Unit]](1)
+  private val workerThread = new Array[Thread](1)
 
-  private val tempForDrain = new util.LinkedList[ConsumerRecords[K, V]]()
+  private val tempForDrain: ListBuffer[ConsumerRecords[K, V]] = new ListBuffer[ConsumerRecords[K, V]]
 
   private def setWorkerThread(thread: Thread): Unit = {
     logger.info(s"set worker thread. thread name: ${thread.getName}")
-    workerFutureThreadList.append(thread)
+    workerThread(0) = thread
   }
 
   private def setWorkerFuture(future: Future[Unit]): Unit = {
     logger.info(s"set worker future.")
-    workerFutureList.append(future)
+    workerFuture(0) = future
   }
 
   private def clearWorkerThreadAndFuture(): Unit = {
     logger.info("clear worker thread and future.")
-    workerFutureList.clear()
-    workerFutureThreadList.clear()
+    workerThread(0) = null
+    workerFuture(0) = null
   }
 
-  def getKafkaConsumer: IKafkaConsumer[K, V] = kafkaConsumer
+  private def getWorkerThread: Thread = workerThread(0)
+  private def getWorkerFuture: Future[Unit] = workerFuture(0)
+
+  private def loggingThreadAndFutureState(): Unit = {
+    logger.info(s"future complete state: ${this.getWorkerFuture.isCompleted}")
+    logger.info(s"thread state: ${this.getWorkerThread.getName}(${this.getWorkerThread.getState})")
+  }
 
   def getKafkaConsumerMetrics: KafkaMetrics = consumerMetrics
-
-  def getThreadAndFutureState: immutable.IndexedSeq[String] = {
-    for (index <- workerFutureThreadList.indices) yield {
-      s"future complete state: ${workerFutureList(index).isCompleted}, " +
-        s"${workerFutureThreadList(index).getName}: ${workerFutureThreadList(index).getState}"
-    }
-  }
 
   def getBufferSize: Int = {
     logger.debug(s"get buffer size. size ${consumerRecordBuffer.size()}")
@@ -99,26 +94,14 @@ class ConsumerWorker[K, V](kafkaConsumer: IKafkaConsumer[K, V],
   }
 
   def start(): Unit = {
-    this.start(1)
-  }
-
-  def start(parallelLevel: Int): Unit = {
     if (workerIsRunning.get) {
       logger.info("consumer worker already start.")
     } else {
-      logger.info(s"consumer worker start. parallel level: $parallelLevel")
+      logger.info(s"consumer worker start.")
       this.clearWorkerThreadAndFuture()
       workerIsRunning.set(true)
 
-      val maxParallelLevel = kafkaConsumer.subscription().map(topic => kafkaConsumer.partitionsFor(topic).length).sum
-
-      if (parallelLevel > maxParallelLevel) {
-        logger.info(s"parallel level is exceed available processor count. " +
-          s"parallel level reset available processor count: $maxParallelLevel")
-        (1 to maxParallelLevel).foreach(_ => this.setWorkerFuture(loopTask))
-      } else {
-        (1 to parallelLevel).foreach(_ => this.setWorkerFuture(loopTask))
-      }
+      this.setWorkerFuture(loopTask)
     }
   }
 
@@ -134,15 +117,17 @@ class ConsumerWorker[K, V](kafkaConsumer: IKafkaConsumer[K, V],
             if (consumerRecords.count == 0) {
               logger.info("consume record count is 0. wait 1 sec.")
               Thread.sleep(1000)
-            }
-            else {
-              if (writeToBuffer(consumerRecords).isDefined)
+            } else {
+              if (writeToBuffer(consumerRecords).isDefined) {
+                logger.info(s"consume record count is ${consumerRecords.count()}")
                 kafkaConsumer.commitAsync(ConsumerWorker.kafkaConsumerCommitCallback)
+                logger.info("offset commit async.")
+              }
             }
           case None => Unit
         }
       }
-      logger.info(s"producer worker task loop stop. worker is running: ${workerIsRunning.get()}")
+      logger.info(s"consumer worker task loop stop. worker is running: ${workerIsRunning.get()}")
     }
   }
 
@@ -150,7 +135,7 @@ class ConsumerWorker[K, V](kafkaConsumer: IKafkaConsumer[K, V],
     logger.trace(s"record read from kafka")
 
     try {
-      Option(kafkaConsumer.poll(Duration.ofMillis(Long.MaxValue)))
+      Option(kafkaConsumer.poll(Duration.ofMillis(1000)))
     } catch {
       case e:Exception =>
         logger.error(e.getMessage)
@@ -160,7 +145,7 @@ class ConsumerWorker[K, V](kafkaConsumer: IKafkaConsumer[K, V],
   }
 
   private def writeToBuffer(consumerRecords: ConsumerRecords[K, V]): Option[Unit] = {
-    logger.trace("take producer record from queue.")
+    logger.trace("put consumer record to queue.")
     try {
       Option(consumerRecordBuffer.put(consumerRecords))
     } catch {
@@ -180,7 +165,7 @@ class ConsumerWorker[K, V](kafkaConsumer: IKafkaConsumer[K, V],
 
       logger.info(s"set consumer worker running state to false. before running state: ${workerIsRunning.get()}")
       if (workerIsRunning.get) workerIsRunning.set(false)
-      this.wakeUpAllWaitWorkerThread()
+      this.wakeUpWaitWorkerThread()
 
       logger.info(s"set consumer worker shutdown state to true. before shutdown state: ${workerIsShutDown.get()}")
       if (!workerIsShutDown.get()) workerIsShutDown.set(true)
@@ -192,45 +177,50 @@ class ConsumerWorker[K, V](kafkaConsumer: IKafkaConsumer[K, V],
         logger.error(s"remain consume record: ${remainConsumerRecords.length}")
         remainConsumerRecords.flatMap(_.iterator()).foreach(record => logger.error(record.toString))
 
-        logger.info(s"wait for ${ConsumerWorker.remainRecordInBufferWaitMillis} millis remain record in buffer." +
-          s" buffer size: ${this.getBufferSize}")
-        logger.info(this.getThreadAndFutureState.mkString(", "))
+        logger.info(s"wait for ${ConsumerWorker.remainRecordInBufferWaitMillis} millis remain record in buffer. buffer size: ${this.getBufferSize}")
+        this.loggingThreadAndFutureState()
         Thread.sleep(ConsumerWorker.remainRecordInBufferWaitMillis)
       }
       logger.info(s"buffer clean up complete. size: ${this.getBufferSize}")
 
-      logger.info("sync kafka consumer.")
-
-      this.kafkaConsumer.commitSync()
       this.shutdownHook()
       logger.info("consumer worker stopped.")
     }
   }
 
-  private def wakeUpAllWaitWorkerThread(): Unit = {
-    logger.info(s"check all thread state and sent wake up signal when thread is waiting.")
-    for {
-      thread <- workerFutureThreadList
-      if thread.getState == Thread.State.WAITING
-    } {
-      logger.info(s"sent interrupt signal to worker thread. thread name: ${thread.getName}, state: ${thread.getState}")
-      thread.interrupt()
+  def close(): Unit = {
+    logger.info("consumer close")
+    if (workerIsRunning.get()) {
+      logger.error("worker is running. can't close consumer.")
+    } else {
+      this.kafkaConsumer.close()
+      logger.info("consumer close complete.")
+    }
+  }
+
+
+
+  private def wakeUpWaitWorkerThread(): Unit = {
+    logger.info(s"check thread state and sent wake up signal when thread is waiting.")
+    if (this.getWorkerThread.getState == Thread.State.WAITING) {
+      logger.info(s"sent interrupt signal to worker thread. thread name: ${this.getWorkerThread.getName}, state: ${this.getWorkerThread.getState}")
+      this.getWorkerThread.interrupt()
     }
   }
 
   private def shutdownHook(): Unit = {
-    logger.info("consumer worker shutdown start.")
-    while (!workerFutureList.forall(_.isCompleted)) {
+    logger.info("consumer worker shutdown hook start.")
+    while (!this.getWorkerFuture.isCompleted) {
       try {
-        logger.info("future status. :" + workerFutureList.mkString(", "))
-        logger.info("thread status. :" + workerFutureThreadList.map(t => t.getName + "::" + t.getState).mkString(", "))
-        this.wakeUpAllWaitWorkerThread()
-        Thread.sleep(1000)
+        this.loggingThreadAndFutureState()
+        this.wakeUpWaitWorkerThread()
+        Thread.sleep(ConsumerWorker.remainRecordInBufferWaitMillis)
       } catch {
         case e:Exception =>
-          logger.error("wait for complete already producer record is interrupted.", e)
+          logger.error("wait for complete already consumer record is interrupted.", e)
       }
     }
+    this.kafkaConsumer.commitSync()
     logger.info("consumer worker shutdown complete.")
   }
 

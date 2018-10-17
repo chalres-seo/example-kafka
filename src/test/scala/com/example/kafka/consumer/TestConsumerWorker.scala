@@ -88,17 +88,41 @@ class TestConsumerWorker extends LazyLogging {
   }
 
   @Test
-  def testConsumerWorkerFromBeginning(): Unit = {
-    this.produceTestRecordSet()
+  def testConsumerWorker(): Unit = {
     val consumerWorker: ConsumerWorker[String, String] =
-      ConsumerWorker(testTopicName, new StringDeserializer, new StringDeserializer, OffsetResetStrategy.EARLIEST)
-    (0 to 10).map(_ => 5).product
+      ConsumerWorker(testTopicName, new StringDeserializer, new StringDeserializer)
 
     consumerWorker.start()
-    Thread.sleep(5000)
+    Thread.sleep(3000)
+    this.produceTestRecordSet()
+    Thread.sleep(3000)
 
-    consumerWorker.getConsumerRecords.foreach(println)
+    val records = consumerWorker.getConsumerRecords
+    records.foreach(records => records.iterator().foreach(println))
+
     Await.result(consumerWorker.stop(), Duration.Inf)
+
+    Assert.assertThat(records.map(_.count()).sum, is(testTopicRecordSetCount))
+    consumerWorker.close()
+  }
+
+  @Test
+  def testConsumerWorkerFromBeginning(): Unit = {
+    this.produceTestRecordSet()
+
+    val consumerWorker: ConsumerWorker[String, String] =
+      ConsumerWorker(testTopicName, new StringDeserializer, new StringDeserializer, OffsetResetStrategy.EARLIEST)
+
+    consumerWorker.start()
+    Thread.sleep(3000)
+
+    val records = consumerWorker.getConsumerRecords
+    records.foreach(records => records.iterator().foreach(println))
+
+    Await.result(consumerWorker.stop(), Duration.Inf)
+
+    Assert.assertThat(records.map(_.count()).sum, is(testTopicRecordSetCount))
+    consumerWorker.close()
   }
 
 
@@ -126,7 +150,7 @@ class TestConsumerWorker extends LazyLogging {
     kafkaProducer.close()
   }
 
-  def getConsumerCommitAsyncCallback(): OffsetCommitCallback = {
+  def getConsumerCommitAsyncCallback: OffsetCommitCallback = {
     new OffsetCommitCallback {
       override def onComplete(offsets: util.Map[TopicPartition, OffsetAndMetadata], exception: Exception): Unit = {
         if (exception == null) {
