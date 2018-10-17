@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<configuration debug="false">
+<configuration debug="true">
   <timestamp key="day" datePattern="yyyy-MM-dd"/>
   <timestamp key="time" datePattern="HH:mm:ss"/>
 
@@ -61,11 +61,12 @@
   </appender>
 
   <root>
-    <level value="TRACE"/>
+    <level value="INFO"/>
     <appender-ref ref="file-info"/>
     <appender-ref ref="file-debug"/>
-    <appender-ref ref="file-trace"/>
     <appender-ref ref="console-debug"/>
   </root>
+
+  <logger name="com.example" level="DEBUG" />
 
 </configuration>

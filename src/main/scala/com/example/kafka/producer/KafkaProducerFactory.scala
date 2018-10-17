@@ -11,7 +11,7 @@ import org.apache.kafka.common.serialization.Serializer
 import scala.collection.JavaConversions._
 import scala.collection.JavaConverters._
 
-private[producer] object KafkaProducerFactory extends LazyLogging {
+private[kafka] object KafkaProducerFactory extends LazyLogging {
   private val kafkaProducerProps: Properties = AppConfig.getKafkaProducerProps
   private val kafkaProducerClientIdPrefix = kafkaProducerProps.getProperty("client.id")
 

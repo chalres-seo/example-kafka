@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<configuration debug="false">
+<configuration debug="true">
   <timestamp key="day" datePattern="yyyy-MM-dd"/>
   <timestamp key="time" datePattern="HH:mm:ss"/>
 

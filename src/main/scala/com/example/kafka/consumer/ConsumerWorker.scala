@@ -2,26 +2,28 @@ package com.example.kafka.consumer
 
 import java.time.Duration
 import java.util
+import java.util.Collections
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.{ExecutorService, Executors, LinkedBlockingQueue}
 
 import com.example.kafka.metrics.KafkaMetrics
 import com.example.kafka.producer.ProducerWorker
 import com.typesafe.scalalogging.LazyLogging
-import org.apache.kafka.clients.consumer.{ConsumerRecord, ConsumerRecords, OffsetResetStrategy, Consumer => IKafkaConsumer}
+import org.apache.kafka.clients.consumer.{ConsumerRecord, ConsumerRecords, OffsetAndMetadata, OffsetCommitCallback, OffsetResetStrategy, Consumer => IKafkaConsumer}
+import org.apache.kafka.clients.producer.RecordMetadata
 import org.apache.kafka.common.serialization.Deserializer
-import org.apache.kafka.common.{Metric, MetricName}
+import org.apache.kafka.common.{Metric, MetricName, PartitionInfo, TopicPartition}
 
-import scala.collection.immutable
+import scala.collection.{immutable, mutable}
 import scala.collection.mutable.ListBuffer
 import scala.concurrent.{ExecutionContext, ExecutionContextExecutor, Future}
 import scala.concurrent.duration.TimeUnit
-
 import scala.collection.JavaConversions._
 
-// TODO: consumer worker loop logic
 class ConsumerWorker[K, V](kafkaConsumer: IKafkaConsumer[K, V],
                            queueConsumerExecutorService: Option[ExecutorService] = None) extends LazyLogging {
+
+  //type ConsumerHandlerType = ConsumerRecords[K, V] => Future[Unit]
 
   private implicit val queueConsumerExecutionContext: ExecutionContextExecutor = queueConsumerExecutorService match {
     case Some(executorService) =>
@@ -35,8 +37,6 @@ class ConsumerWorker[K, V](kafkaConsumer: IKafkaConsumer[K, V],
   private val consumerRecordBuffer: LinkedBlockingQueue[ConsumerRecords[K, V]] =
     new LinkedBlockingQueue[ConsumerRecords[K, V]]()
 
-  private val drainBuffer = new ListBuffer[ConsumerRecords[K, V]]()
-
   private val kafkaConsumerMetrics: util.Map[MetricName, _ <: Metric] = kafkaConsumer.metrics()
   private val consumerMetrics = KafkaMetrics(kafkaConsumerMetrics)
 
@@ -45,6 +45,8 @@ class ConsumerWorker[K, V](kafkaConsumer: IKafkaConsumer[K, V],
 
   private val workerFutureThreadList = ListBuffer.empty[Thread]
   private val workerFutureList = ListBuffer.empty[Future[Unit]]
+
+  private val tempForDrain = new util.LinkedList[ConsumerRecords[K, V]]()
 
   private def setWorkerThread(thread: Thread): Unit = {
     logger.info(s"set worker thread. thread name: ${thread.getName}")
@@ -80,11 +82,19 @@ class ConsumerWorker[K, V](kafkaConsumer: IKafkaConsumer[K, V],
 
   def bufferIsEmpty: Boolean = this.getBufferSize == 0
 
-  def getConsumerRecords(): ConsumerRecords[K, V] = {
+  def getConsumerRecords: Vector[ConsumerRecords[K, V]] = {
+    synchronized {
+      tempForDrain.clear()
+      this.consumerRecordBuffer.drainTo(tempForDrain, Int.MaxValue)
+      tempForDrain.toVector
+    }
+  }
+
+  def getConsumerRecord: ConsumerRecords[K, V] = {
     this.consumerRecordBuffer.take()
   }
 
-  def getConsumerRecords(unit: Long, timeUnit: TimeUnit): ConsumerRecords[K, V] = {
+  def getConsumerRecord(unit: Long, timeUnit: TimeUnit): ConsumerRecords[K, V] = {
     this.consumerRecordBuffer.poll(unit, timeUnit)
   }
 
@@ -100,7 +110,7 @@ class ConsumerWorker[K, V](kafkaConsumer: IKafkaConsumer[K, V],
       this.clearWorkerThreadAndFuture()
       workerIsRunning.set(true)
 
-      val maxParallelLevel = Runtime.getRuntime.availableProcessors() -1
+      val maxParallelLevel = kafkaConsumer.subscription().map(topic => kafkaConsumer.partitionsFor(topic).length).sum
 
       if (parallelLevel > maxParallelLevel) {
         logger.info(s"parallel level is exceed available processor count. " +
@@ -118,12 +128,19 @@ class ConsumerWorker[K, V](kafkaConsumer: IKafkaConsumer[K, V],
     Future {
       this.setWorkerThread(Thread.currentThread())
       while (workerIsRunning.get) {
+        logger.info("record read from kafka")
         this.readFromKafka match {
           case Some(consumerRecords) =>
-            //this.consumerRecordBuffer.put(consumerRecords)
+            if (consumerRecords.count == 0) {
+              logger.info("consume record count is 0. wait 1 sec.")
+              Thread.sleep(1000)
+            }
+            else {
+              if (writeToBuffer(consumerRecords).isDefined)
+                kafkaConsumer.commitAsync(ConsumerWorker.kafkaConsumerCommitCallback)
+            }
           case None => Unit
         }
-        Thread.sleep(1000)
       }
       logger.info(s"producer worker task loop stop. worker is running: ${workerIsRunning.get()}")
     }
@@ -133,15 +150,26 @@ class ConsumerWorker[K, V](kafkaConsumer: IKafkaConsumer[K, V],
     logger.trace(s"record read from kafka")
 
     try {
-
-      val result = kafkaConsumer.poll(Duration.ofSeconds(10))
-      kafkaConsumer.poll(Duration.ofSeconds(3)).iterator().foreach(println)
-      println("a")
-      Option(result)
+      Option(kafkaConsumer.poll(Duration.ofMillis(Long.MaxValue)))
     } catch {
       case e:Exception =>
         logger.error(e.getMessage)
         logger.error(s"failed record read from kafka. assignment: ${kafkaConsumer.assignment().mkString(", ")}")
+        None
+    }
+  }
+
+  private def writeToBuffer(consumerRecords: ConsumerRecords[K, V]): Option[Unit] = {
+    logger.trace("take producer record from queue.")
+    try {
+      Option(consumerRecordBuffer.put(consumerRecords))
+    } catch {
+      case _:InterruptedException =>
+        logger.info("worker thread is wake up.")
+        None
+      case e:Exception =>
+        logger.error("failed put consumer record to queue.", e)
+        consumerRecords.foreach(record => logger.error(record.toString))
         None
     }
   }
@@ -158,11 +186,11 @@ class ConsumerWorker[K, V](kafkaConsumer: IKafkaConsumer[K, V],
       if (!workerIsShutDown.get()) workerIsShutDown.set(true)
 
       while (!consumerRecordBuffer.isEmpty) {
-        println(consumerRecordBuffer.isEmpty)
-        val remainConsumerRecords = new ListBuffer[ConsumerRecords[K, V]]
-        consumerRecordBuffer.drainTo(remainConsumerRecords)
+        val remainConsumerRecords: ListBuffer[ConsumerRecords[K, V]] = new ListBuffer[ConsumerRecords[K, V]]
+        consumerRecordBuffer.drainTo(remainConsumerRecords, Int.MaxValue)
 
-        logger.error("remain consume record: \n" + remainConsumerRecords.mkString("\n"))
+        logger.error(s"remain consume record: ${remainConsumerRecords.length}")
+        remainConsumerRecords.flatMap(_.iterator()).foreach(record => logger.error(record.toString))
 
         logger.info(s"wait for ${ConsumerWorker.remainRecordInBufferWaitMillis} millis remain record in buffer." +
           s" buffer size: ${this.getBufferSize}")
@@ -172,8 +200,8 @@ class ConsumerWorker[K, V](kafkaConsumer: IKafkaConsumer[K, V],
       logger.info(s"buffer clean up complete. size: ${this.getBufferSize}")
 
       logger.info("sync kafka consumer.")
-      this.kafkaConsumer.commitSync()
 
+      this.kafkaConsumer.commitSync()
       this.shutdownHook()
       logger.info("consumer worker stopped.")
     }
@@ -197,6 +225,7 @@ class ConsumerWorker[K, V](kafkaConsumer: IKafkaConsumer[K, V],
         logger.info("future status. :" + workerFutureList.mkString(", "))
         logger.info("thread status. :" + workerFutureThreadList.map(t => t.getName + "::" + t.getState).mkString(", "))
         this.wakeUpAllWaitWorkerThread()
+        Thread.sleep(1000)
       } catch {
         case e:Exception =>
           logger.error("wait for complete already producer record is interrupted.", e)
@@ -214,11 +243,23 @@ object ConsumerWorker extends LazyLogging {
 
   private val remainRecordInBufferWaitMillis: Long = 1000L
 
-  def apply[K, V](keyDeserializer: Deserializer[K],
+  private lazy val kafkaConsumerCommitCallback = new OffsetCommitCallback {
+    override def onComplete(offsets: util.Map[TopicPartition, OffsetAndMetadata], exception: Exception): Unit = {
+      if (exception == null) {
+        logger.debug(s"async commit success, offsets: $offsets")
+      } else logger.error(s"commit failed for offsets: $offsets", exception)
+    }
+  }
+
+  def apply[K, V](topic: String,
+                  keyDeserializer: Deserializer[K],
                   valueDeserializer: Deserializer[V],
+                  offsetResetStrategy: OffsetResetStrategy = OffsetResetStrategy.LATEST,
                   useGlobalExecutionContext: Boolean = true): ConsumerWorker[K, V] = {
-    new ConsumerWorker[K, V](KafkaConsumerFactory.createConsumer(keyDeserializer, valueDeserializer),
-      if (useGlobalExecutionContext) None else Option(consumerWorkerExecutorService))
+    val kafkaConsumer = KafkaConsumerFactory.createConsumer(keyDeserializer, valueDeserializer, offsetResetStrategy)
+    kafkaConsumer.subscribe(util.Collections.singleton(topic))
+
+    new ConsumerWorker[K, V](kafkaConsumer, if (useGlobalExecutionContext) None else Option(consumerWorkerExecutorService))
   }
 
   def mock[K, V](offsetResetStrategy: OffsetResetStrategy = OffsetResetStrategy.LATEST): ConsumerWorker[K, V] = {

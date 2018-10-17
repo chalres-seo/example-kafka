@@ -1,61 +1,92 @@
 package com.example.kafka.producer
 
-import java.util.concurrent.Future
+import java.util.Collections
+import java.util.concurrent.{Future => JFuture}
 
-import ch.qos.logback.classic.{Level, Logger}
+import com.example.kafka.admin.Admin
+import com.example.kafka.consumer.KafkaConsumerFactory
 import com.example.utils.AppConfig
 import com.typesafe.scalalogging.LazyLogging
 import org.apache.kafka.clients.producer._
-import org.apache.kafka.common.serialization.StringSerializer
-import org.junit.{Assert, Test}
+import org.apache.kafka.common.serialization.{StringDeserializer, StringSerializer}
+import org.junit.{After, Assert, Before, Test}
 import org.hamcrest.CoreMatchers._
-import org.joda.time.DateTime
-import org.slf4j.LoggerFactory
 
 import scala.concurrent.Await
 import scala.concurrent.duration.Duration
+import java.time.{Duration => JDuration}
+
+import org.apache.kafka.clients.consumer.{ConsumerRecord, KafkaConsumer}
+
+import scala.annotation.tailrec
+import scala.collection.JavaConverters._
+import scala.collection.JavaConversions._
 
 class TestProducerWorker extends LazyLogging {
   private val testTopicName: String = "test-producer"
-  private val testPerfTopicName: String = "test-producer-perf"
+  private val testTopicPartitionCount: Int = 3
+  private val testTopicReplicaFactor:Short = 3
 
-  private val testRecordSet10: Vector[ProducerRecord[String, String]] = (1 to 10)
+  private val testTopicRecordSetCount = 10
+  private val testRecordSet: Vector[ProducerRecord[String, String]] = (1 to testTopicRecordSetCount)
     .map(index => new ProducerRecord[String, String](testTopicName, s"key-$index", s"value-$index"))
     .toVector
 
-  private val testRecordSet1000000: Vector[ProducerRecord[String, String]] = (1 to 1000000)
-    .map(index => new ProducerRecord[String, String](testPerfTopicName, s"key-$index", s"value-$index"))
-    .toVector
+  private val kafkaAdmin = Admin()
+
+  @Before
+  def setUp(): Unit = {
+    while (kafkaAdmin.isExistTopic(testTopicName)) {
+      kafkaAdmin.deleteTopic(testTopicName)
+      Thread.sleep(1000)
+    }
+
+    while(!kafkaAdmin.isExistTopic(testTopicName)) {
+      kafkaAdmin.createTopic(testTopicName, testTopicPartitionCount, testTopicReplicaFactor)
+      Thread.sleep(1000)
+    }
+  }
+
+  @After
+  def cleanUp(): Unit = {
+    while (kafkaAdmin.isExistTopic(testTopicName)) {
+      kafkaAdmin.deleteTopic(testTopicName)
+      Thread.sleep(1000)
+    }
+  }
 
   @Test
   def testProducer(): Unit = {
-    logger.info("create kafka producer.")
-    val kafkaProducer: KafkaProducer[String, String] =
-      new KafkaProducer(AppConfig.getKafkaProducerProps, new StringSerializer(), new StringSerializer())
+    val kafkaProducer = new KafkaProducer(AppConfig.getKafkaProducerProps, new StringSerializer(), new StringSerializer())
 
-    val futures: Vector[Future[RecordMetadata]] = testRecordSet10.map(kafkaProducer.send)
+    val produceFutures: Vector[JFuture[RecordMetadata]] = testRecordSet.map(kafkaProducer.send)
+    while(!produceFutures.forall(_.isDone)) { Thread.sleep(1000) }
 
-    while(!futures.forall(_.isDone)) { Thread.sleep(1000) }
-
-    futures.foreach { f =>
-      val metadata = f.get()
-      logger.debug(s"succeed send record. metadata: "
-        + "topic: " + metadata.topic() + ", "
-        + "partition: " + metadata.partition() + ", "
-        + "offset: " + metadata.offset() + ", "
-        + "timestamp: " + metadata.timestamp() + ", "
-        + "serialized key size: " + metadata.serializedKeySize() + ", "
-        + "serialized value size: " + metadata.serializedValueSize())
-    }
     kafkaProducer.flush()
+
+    logger.debug {
+      produceFutures.map { f =>
+        val metadata = f.get()
+        s"succeed send record. metadata: " +
+          "topic: " + metadata.topic() + ", " +
+          "partition: " + metadata.partition() + ", " +
+          "offset: " + metadata.offset() + ", " +
+          "timestamp: " + metadata.timestamp() + ", " +
+          "serialized key size: " + metadata.serializedKeySize() + ", " +
+          "serialized value size: " + metadata.serializedValueSize()
+      }.mkString("\n")
+    }
+
+    val records = this.consumeFromBeginning(testTopicName)
+    logger.debug(records.mkString("\n"))
+
     kafkaProducer.close()
+    Assert.assertThat(records.length, is(testTopicRecordSetCount))
   }
 
   @Test
   def testProducerWithCallback(): Unit = {
-    logger.info("create kafka producer.")
-    val kafkaProducer: KafkaProducer[String, String] =
-      new KafkaProducer(AppConfig.getKafkaProducerProps, new StringSerializer(), new StringSerializer())
+    val kafkaProducer = new KafkaProducer(AppConfig.getKafkaProducerProps, new StringSerializer(), new StringSerializer())
 
     val callback = new Callback() {
       override def onCompletion(metadata: RecordMetadata, exception: Exception): Unit = {
@@ -74,144 +105,71 @@ class TestProducerWorker extends LazyLogging {
       }
     }
 
-    val futures: Vector[Future[RecordMetadata]] = testRecordSet10.map(kafkaProducer.send(_, callback))
+    val produceFutures: Vector[JFuture[RecordMetadata]] = testRecordSet.map(kafkaProducer.send(_, callback))
 
-    while(!futures.forall(_.isDone)) { Thread.sleep(1000) }
-
-    futures.foreach { f =>
-      val metadata = f.get()
-      logger.debug(s"succeed send record. metadata: "
-        + "topic: " + metadata.topic() + ", "
-        + "partition: " + metadata.partition() + ", "
-        + "offset: " + metadata.offset() + ", "
-        + "timestamp: " + metadata.timestamp() + ", "
-        + "serialized key size: " + metadata.serializedKeySize() + ", "
-        + "serialized value size: " + metadata.serializedValueSize())
-    }
+    while(!produceFutures.forall(_.isDone)) { Thread.sleep(1000) }
 
     kafkaProducer.flush()
+
+    logger.debug {
+      produceFutures.map { f =>
+        val metadata = f.get()
+        s"succeed send record. metadata: " +
+          "topic: " + metadata.topic() + ", " +
+          "partition: " + metadata.partition() + ", " +
+          "offset: " + metadata.offset() + ", " +
+          "timestamp: " + metadata.timestamp() + ", " +
+          "serialized key size: " + metadata.serializedKeySize() + ", " +
+          "serialized value size: " + metadata.serializedValueSize()
+      }.mkString("\n")
+    }
+
+    val records = this.consumeFromBeginning(testTopicName)
+    logger.debug(records.mkString("\n"))
+
     kafkaProducer.close()
+    Assert.assertThat(records.length, is(testTopicRecordSetCount))
   }
 
   @Test
   def testProducerWorker(): Unit = {
-    logger.info("create producer worker.")
     val producerWorker: ProducerWorker[String, String] = ProducerWorker(new StringSerializer(), new StringSerializer())
 
-    logger.info(s"add test record set. record count: ${testRecordSet10.length}")
-    producerWorker.addProducerRecord(testRecordSet10)
-
-    while (producerWorker.getBufferSize != testRecordSet10.length) {
-      logger.info("wait for 1sec add test record to buffer.")
-      Thread.sleep(1000)
-    }
-
-    logger.info("start mock producer worker.")
     producerWorker.start()
+    producerWorker.addProduceRecords(testRecordSet)
 
-    logger.info("stop mock producer and wait.")
     Await.result(producerWorker.stop(), Duration.Inf)
-    producerWorker.getKafkaProducer.close()
+
+    val records = this.consumeFromBeginning(testTopicName)
+    logger.debug(records.mkString("\n"))
+
+    producerWorker.close()
+    Assert.assertThat(records.length, is(testTopicRecordSetCount))
   }
 
-  @Test
-  def testThroughput(): Unit = {
-    this.setRootLogLevel(Level.INFO)
+  def consumeFromBeginning(topicName: String): Vector[ConsumerRecord[String, String]] = {
+    val kafkaConsumer: KafkaConsumer[String, String] =
+      KafkaConsumerFactory.createConsumer(new StringDeserializer, new StringDeserializer)
 
-    val parallelLevelList: Vector[Int] = Vector(1, 1, 1, 4, 4, 4, 8, 8, 8)
-    val results: Vector[(Int, Double, Double)] = for (parallelLevel <- parallelLevelList) yield {
-      throughputTask(parallelLevel)
+    kafkaConsumer.subscribe(Collections.singletonList(testTopicName))
+    kafkaConsumer.poll(JDuration.ofMillis(1000))
+    kafkaConsumer.seekToBeginning(kafkaConsumer.assignment())
+
+    @tailrec
+    def loop(records:Vector[ConsumerRecord[String, String]]):Vector[ConsumerRecord[String, String]] = {
+      val consumeRecords: Vector[ConsumerRecord[String, String]] =
+        kafkaConsumer.poll(JDuration.ofMillis(1000)).iterator().toVector
+
+      if (consumeRecords.isEmpty) {
+        records
+      } else {
+        loop(records ++ consumeRecords)
+      }
     }
 
-    for (result <- results) {
-      println()
-      println(s"==================================")
-      println(s"parallel level: ${result._1}")
-      println(s"throughput: ${result._2} record/sec")
-      println(s"total time spend: ${result._3}")
-      println(s"==================================")
-    }
-  }
+    val records = loop(kafkaConsumer.poll(JDuration.ofMillis(1000)).iterator().toVector)
 
-  private def throughputTask(parallelLevel: Int): (Int, Double, Double) = {
-    val produceWorker: ProducerWorker[String, String] = ProducerWorker(new StringSerializer(), new StringSerializer())
-
-    logger.info(s"add test record to buffer. record count: ${testRecordSet1000000.length}")
-    produceWorker.addProducerRecord(testRecordSet1000000)
-
-    while (produceWorker.getBufferSize != testRecordSet1000000.length) {
-      logger.info(s"wait 1sec for add test record to buffer complete. buffer size: ${produceWorker.getBufferSize}")
-      Thread.sleep(1000)
-    }
-
-    logger.info("worker start.")
-    val startTime: DateTime = DateTime.now()
-    produceWorker.start(parallelLevel)
-
-    while (produceWorker.getBufferSize != 0 || produceWorker.getIncompleteAsyncProduceRecordCount != 0) {}
-    val timeSpend: Double = (DateTime.now().getMillis - startTime.getMillis) / 1000.0
-    val throughput: Double = testRecordSet1000000.length / timeSpend
-
-    Await.result(produceWorker.stop(), Duration.Inf)
-    produceWorker.getKafkaProducer.flush()
-    produceWorker.getKafkaProducer.close()
-
-    (parallelLevel, throughput, timeSpend)
-  }
-
-  @Test
-  def testThroughputMultiProducer(): Unit = {
-    this.setRootLogLevel(Level.INFO)
-    val producerCountList: Vector[Int] = Vector(1, 1, 1, 4, 4, 4, 8, 8, 8)
-
-    val results: Vector[(Int, Double, Double)] = producerCountList.map(this.throughputMultiProducerTask)
-
-    for (result <- results) {
-      println()
-      println(s"==================================")
-      println(s"producer count: ${result._1}")
-      println(s"throughput: ${BigDecimal(result._2).toString()} record/sec")
-      println(s"total time spend: ${result._3}")
-      println(s"==================================")
-    }
-  }
-
-  def throughputMultiProducerTask(producerCount: Int): (Int, Double, Double) = {
-
-    val producerWorkerList = for (_ <- 1 to producerCount) yield {
-      ProducerWorker(new StringSerializer(), new StringSerializer())
-    }
-
-    val testRecordSet = testRecordSet1000000.length / producerCount
-    val testSplitRecordSet = testRecordSet1000000.slice(0, testRecordSet)
-
-    logger.info(s"add test record to each buffer. record count each buffer: ${testSplitRecordSet.length}")
-    producerWorkerList.foreach(_.addProducerRecord(testSplitRecordSet))
-
-    while (!producerWorkerList.forall(_.getBufferSize == testSplitRecordSet.length)) {
-      logger.info(s"wait 1sec for add test record to buffer complete. buffer size: ${producerWorkerList.map(_.getBufferSize).mkString(", ")}")
-      Thread.sleep(1000)
-    }
-
-    logger.info("worker start.")
-    val startTime = DateTime.now()
-
-    producerWorkerList.foreach(_.start())
-
-    while (producerWorkerList.forall(_.getBufferSize != 0) || producerWorkerList.forall(_.getIncompleteAsyncProduceRecordCount != 0)) {}
-    val timeSpend: Double = (DateTime.now().getMillis - startTime.getMillis) / 1000.0
-    val throughput: Double = testRecordSet1000000.length / timeSpend
-
-    producerWorkerList.map(_.stop()).foreach(Await.result(_, Duration.Inf))
-    producerWorkerList.foreach { worker =>
-      worker.getKafkaProducer.flush()
-      worker.getKafkaProducer.close()
-    }
-
-    (producerCount, throughput, timeSpend)
-  }
-
-  def setRootLogLevel(level: Level): Unit = {
-    LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME).asInstanceOf[Logger].setLevel(level)
+    kafkaConsumer.close()
+    records
   }
 }
