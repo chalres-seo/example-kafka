@@ -33,4 +33,7 @@ echo ">>set own permission for kafka."
 chown -R kafka:kafka /home/kafka
 echo ">> done."
 echo ""
+
+echo ">> add local ip for kafka."
+echo ""
 echo ">> complete test kafka setup script."
