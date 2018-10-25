@@ -6,10 +6,6 @@ import org.apache.kafka.common.serialization.StringSerializer
 import org.hamcrest.CoreMatchers.is
 import org.junit.{Assert, Test}
 
-import scala.concurrent.Await
-import scala.concurrent.duration.Duration
-
-import scala.collection.JavaConverters._
 import scala.collection.JavaConversions._
 
 class TestMockProducerWorker extends LazyLogging {

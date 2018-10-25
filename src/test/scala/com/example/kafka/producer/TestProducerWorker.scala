@@ -19,7 +19,6 @@ import java.time.{Duration => JDuration}
 import org.apache.kafka.clients.consumer.{ConsumerRecord, KafkaConsumer}
 
 import scala.annotation.tailrec
-import scala.collection.JavaConverters._
 import scala.collection.JavaConversions._
 
 class TestProducerWorker extends LazyLogging {

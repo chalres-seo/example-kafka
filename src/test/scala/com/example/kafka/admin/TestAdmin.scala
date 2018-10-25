@@ -1,21 +1,10 @@
 package com.example.kafka.admin
 
-import java.util
-import java.util.Scanner
-
-import com.example.utils.AppConfig
 import com.typesafe.scalalogging.LazyLogging
-import org.apache.kafka.clients.admin.{AdminClient, KafkaAdminClient, TopicDescription}
-import org.apache.kafka.clients.producer.ProducerRecord
-import org.apache.kafka.common.TopicPartitionInfo
-import org.apache.kafka.common.errors.TopicExistsException
 import org.junit._
 import org.hamcrest.CoreMatchers._
 import org.junit.runners.MethodSorters
 
-import scala.concurrent.Await
-import scala.concurrent.duration.Duration
-import scala.collection.JavaConverters._
 import scala.collection.JavaConversions._
 
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
@@ -23,11 +12,6 @@ class TestAdmin extends LazyLogging {
   private val testTopicName = "test-admin"
   private val testTopicPartitionCount = 3
   private val testTopicReplicaFactor: Short = 3
-
-  private val testTopicRecordSetCount = 10
-  private val testRecordSet: Vector[ProducerRecord[String, String]] = (1 to testTopicRecordSetCount)
-    .map(index => new ProducerRecord[String, String](testTopicName, s"key-$index", s"value-$index"))
-    .toVector
 
   private val kafkaAdmin = Admin()
 

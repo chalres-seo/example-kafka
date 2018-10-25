@@ -7,7 +7,6 @@ import org.apache.kafka.common.serialization.StringSerializer
 
 import org.junit.Test
 
-import scala.collection.JavaConversions._
 import scala.concurrent.Await
 import scala.concurrent.duration.Duration
 import scala.io.Source

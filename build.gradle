@@ -49,7 +49,6 @@ dependencies {
 
 // Test
 dependencies {
-    compile 'org.scala-lang:scala-library:2.11.12'
     testCompile group: 'junit', name: 'junit', version: junitVersion
 }
 

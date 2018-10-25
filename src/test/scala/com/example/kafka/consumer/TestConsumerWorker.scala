@@ -6,8 +6,6 @@ import com.typesafe.scalalogging.LazyLogging
 import org.apache.kafka.clients.consumer._
 import org.apache.kafka.clients.producer.{KafkaProducer, ProducerRecord, RecordMetadata}
 import org.apache.kafka.common.serialization.{StringDeserializer, StringSerializer}
-import org.junit.{After, Assert, Before, Test}
-import org.hamcrest.CoreMatchers._
 import java.time.{Duration => JDuration}
 import java.util
 import java.util.concurrent.{Future => JFuture}
@@ -16,7 +14,6 @@ import com.example.utils.AppConfig
 import org.apache.kafka.common.TopicPartition
 
 import scala.collection.JavaConversions._
-import scala.collection.JavaConverters._
 import scala.annotation.tailrec
 import org.junit.{After, Assert, Before, Test}
 import org.hamcrest.CoreMatchers._

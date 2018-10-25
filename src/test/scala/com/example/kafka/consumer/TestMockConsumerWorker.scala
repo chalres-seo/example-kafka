@@ -4,17 +4,12 @@ import java.lang
 import java.time.{Duration => JDuration}
 
 import com.typesafe.scalalogging.LazyLogging
-import org.apache.kafka.clients.consumer.{ConsumerRecord, ConsumerRecords, MockConsumer, OffsetResetStrategy}
-import org.apache.kafka.common.{PartitionInfo, TopicPartition}
-import org.apache.kafka.common.serialization.StringDeserializer
+import org.apache.kafka.clients.consumer.{ConsumerRecord, MockConsumer, OffsetResetStrategy}
+import org.apache.kafka.common.TopicPartition
 import org.hamcrest.CoreMatchers.is
 import org.junit.{Assert, Test}
 
 import scala.collection.JavaConversions._
-import scala.collection.JavaConverters._
-import scala.collection.mutable.ListBuffer
-import scala.concurrent.Await
-import scala.concurrent.duration.Duration
 
 class TestMockConsumerWorker extends LazyLogging {
   private val testTopicName: String = "test"
