@@ -23,9 +23,12 @@ def log4jOverSlf4jVersion = '1.7.25'
 def yodaTimeVersion = '2.10'
 def avroVersion = '1.8.2'
 
+// Kafka
+def kafkaClientVersion = '2.0.0'
+
 // Test
 def junitVersion = '4.12'
-def kafkaClientVersion = '2.0.0'
+
 
 // Common
 dependencies {

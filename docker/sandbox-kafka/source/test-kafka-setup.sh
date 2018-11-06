@@ -1,6 +1,9 @@
+#!/bin/bash
+
 kafka=kafka_2.11-2.0.0
 kafka_bin_tar=/tmp/source/${kafka}.tgz
 kafka_home=/home/kafka/${kafka}
+
 echo ">> start test kafka setup script."
 echo ""
 
@@ -10,7 +13,7 @@ echo ">> done."
 echo ""
 
 echo ">> decompress kafka bin."
-tar xf $kafka_bin_tar --directory /home/kafka
+tar xf ${kafka_bin_tar} --directory /home/kafka
 echo ">> done."
 echo ""
 
