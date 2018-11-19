@@ -2,12 +2,14 @@ package com.example.utils
 
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Paths, StandardOpenOption}
+import java.util.concurrent.{ExecutorService, Executors}
 
 import com.typesafe.scalalogging.LazyLogging
 
 import scala.util.{Failure, Success, Try}
 
 object AppUtils extends LazyLogging {
+
   def writeFile(savePathString: String, records: Vector[String], append: Boolean) = {
     val savePath = Paths.get(savePathString)
 

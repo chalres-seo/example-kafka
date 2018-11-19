@@ -1,154 +1,40 @@
 package com.example.kafka.producer
 
-import java.util.Collections
-import java.util.concurrent.{Future => JFuture}
-
-import com.example.kafka.admin.Admin
-import com.example.kafka.consumer.KafkaConsumerFactory
-import com.example.utils.AppConfig
-import com.typesafe.scalalogging.LazyLogging
-import org.apache.kafka.clients.producer._
-import org.apache.kafka.common.serialization.{StringDeserializer, StringSerializer}
-import org.junit.{After, Assert, Before, Test}
-import org.hamcrest.CoreMatchers._
-
-import scala.concurrent.Await
-import scala.concurrent.duration.Duration
 import java.time.{Duration => JDuration}
+import java.util.Collections
 
-import org.apache.kafka.clients.consumer.{ConsumerRecord, KafkaConsumer}
+import com.example.kafka.admin.AdminClient
+import com.example.kafka.consumer.{ConsumerClient, TestConsumerClient}
+import org.apache.kafka.clients.producer.{ProducerRecord, RecordMetadata}
+import org.junit._
+import org.hamcrest.CoreMatchers._
+import com.example.kafka.producer.TestProducerWorker._
+import com.example.utils.AppConfig
+import org.apache.kafka.clients.consumer.{ConsumerRecord, ConsumerRecords, KafkaConsumer}
 
 import scala.annotation.tailrec
+import scala.concurrent.Await
+import scala.concurrent.duration.Duration
+
 import scala.collection.JavaConversions._
 
-class TestProducerWorker extends LazyLogging {
-  private val testTopicName: String = "test-producer"
-  private val testTopicPartitionCount: Int = 3
-  private val testTopicReplicaFactor:Short = 3
-
-  private val testTopicRecordSetCount = 10
-  private val testRecordSet: Vector[ProducerRecord[String, String]] = (1 to testTopicRecordSetCount)
-    .map(index => new ProducerRecord[String, String](testTopicName, s"key-$index", s"value-$index"))
-    .toVector
-
-  private val kafkaAdmin = Admin()
-
-  @Before
-  def setUp(): Unit = {
-    while (kafkaAdmin.isExistTopic(testTopicName)) {
-      kafkaAdmin.deleteTopic(testTopicName)
-      Thread.sleep(1000)
-    }
-
-    while(!kafkaAdmin.isExistTopic(testTopicName)) {
-      kafkaAdmin.createTopic(testTopicName, testTopicPartitionCount, testTopicReplicaFactor)
-      Thread.sleep(1000)
-    }
-  }
-
-  @After
-  def cleanUp(): Unit = {
-    while (kafkaAdmin.isExistTopic(testTopicName)) {
-      kafkaAdmin.deleteTopic(testTopicName)
-      Thread.sleep(1000)
-    }
-  }
+class TestProducerWorker {
 
   @Test
-  def testProducer(): Unit = {
-    val kafkaProducer = new KafkaProducer(AppConfig.getKafkaProducerProps, new StringSerializer(), new StringSerializer())
-
-    val produceFutures: Vector[JFuture[RecordMetadata]] = testRecordSet.map(kafkaProducer.send)
-    while(!produceFutures.forall(_.isDone)) { Thread.sleep(1000) }
-
-    kafkaProducer.flush()
-
-    logger.debug {
-      produceFutures.map { f =>
-        val metadata = f.get()
-        s"succeed send record. metadata: " +
-          "topic: " + metadata.topic() + ", " +
-          "partition: " + metadata.partition() + ", " +
-          "offset: " + metadata.offset() + ", " +
-          "timestamp: " + metadata.timestamp() + ", " +
-          "serialized key size: " + metadata.serializedKeySize() + ", " +
-          "serialized value size: " + metadata.serializedValueSize()
-      }.mkString("\n")
-    }
-
-    val records = this.consumeFromBeginning(testTopicName)
-    logger.debug(records.mkString("\n"))
-
-    Assert.assertThat(records.length, is(testTopicRecordSetCount))
-    kafkaProducer.close()
-  }
-
-  @Test
-  def testProducerWithCallback(): Unit = {
-    val kafkaProducer = new KafkaProducer(AppConfig.getKafkaProducerProps, new StringSerializer(), new StringSerializer())
-
-    val callback = new Callback() {
-      override def onCompletion(metadata: RecordMetadata, exception: Exception): Unit = {
-        if (exception == null) {
-          logger.debug(s"succeed send record. metadata: "
-            + "topic: " + metadata.topic() + ", "
-            + "partition: " + metadata.partition() + ", "
-            + "offset: " + metadata.offset() + ", "
-            + "timestamp: " + metadata.timestamp() + ", "
-            + "serialized key size: " + metadata.serializedKeySize() + ", "
-            + "serialized value size: " + metadata.serializedValueSize())
-        } else {
-          logger.error(s"failed send record. metadata: $metadata", exception)
-
-        }
-      }
-    }
-
-    val produceFutures: Vector[JFuture[RecordMetadata]] = testRecordSet.map(kafkaProducer.send(_, callback))
-
-    while(!produceFutures.forall(_.isDone)) { Thread.sleep(1000) }
-
-    kafkaProducer.flush()
-
-    logger.debug {
-      produceFutures.map { f =>
-        val metadata = f.get()
-        s"succeed send record. metadata: " +
-          "topic: " + metadata.topic() + ", " +
-          "partition: " + metadata.partition() + ", " +
-          "offset: " + metadata.offset() + ", " +
-          "timestamp: " + metadata.timestamp() + ", " +
-          "serialized key size: " + metadata.serializedKeySize() + ", " +
-          "serialized value size: " + metadata.serializedValueSize()
-      }.mkString("\n")
-    }
-
-    val records = this.consumeFromBeginning(testTopicName)
-    logger.debug(records.mkString("\n"))
-
-    Assert.assertThat(records.length, is(testTopicRecordSetCount))
-    kafkaProducer.close()
-  }
-
-  @Test
-  def testProducerWorker(): Unit = {
-    val producerWorker: ProducerWorker[String, String] = ProducerWorker(new StringSerializer(), new StringSerializer())
+  def testProduceRecords(): Unit = {
+    val producerWorker = ProducerWorker[Any, Any](AppConfig.createDefaultKafkaProducerProps, true)
 
     producerWorker.start()
-    producerWorker.addProduceRecords(testRecordSet)
-
+    producerWorker.addProducerRecords(testProduceRecordSet)
     Await.result(producerWorker.stop(), Duration.Inf)
 
-    val records = this.consumeFromBeginning(testTopicName)
-    logger.debug(records.mkString("\n"))
+    val result = this.consumeFromBeginning(testTopicName)
 
-    producerWorker.close()
-    Assert.assertThat(records.length, is(testTopicRecordSetCount))
+    Assert.assertThat(result.length, is(testProduceRecordSetCount))
   }
 
   def consumeFromBeginning(topicName: String): Vector[ConsumerRecord[String, String]] = {
-    val kafkaConsumer: KafkaConsumer[String, String] =
-      KafkaConsumerFactory.createConsumer(new StringDeserializer, new StringDeserializer)
+    val kafkaConsumer: KafkaConsumer[String, String] = new KafkaConsumer[String, String](AppConfig.DEFAULT_KAFKA_CONSUMER_PROPS)
 
     kafkaConsumer.subscribe(Collections.singletonList(testTopicName))
     kafkaConsumer.poll(JDuration.ofMillis(1000))
@@ -170,5 +56,52 @@ class TestProducerWorker extends LazyLogging {
 
     kafkaConsumer.close()
     records
+  }
+}
+
+object TestProducerWorker {
+  val testTopicName = "test-kafka-producer-worker"
+  val testTopicPartitionCount = 3
+  val testTopicReplicationFactor: Short = 3
+
+  val testProduceRecordSetCount = 100
+  val testProduceRecordSet: Vector[ProducerRecord[Any, Any]] =
+    (1 to testProduceRecordSetCount).map { i =>
+      new ProducerRecord(testTopicName, s"key-$i".asInstanceOf[Any], s"value-$i".asInstanceOf[Any])
+    }.toVector
+
+  val testAdminClient = AdminClient(AppConfig.createDefaultKafkaAdminProps)
+  val testConsumerClient = ConsumerClient(AppConfig.createDefaultKafkaConsumerProps)
+
+  @BeforeClass
+  def beforeClass(): Unit = {
+    this.createTestTopic()
+  }
+
+  @AfterClass
+  def tearDownClass(): Unit = {
+    this.deleteTestTopic()
+
+    testAdminClient.close()
+  }
+
+  def createTestTopic(): Unit = {
+    if (!testAdminClient.isExistTopic(testTopicName)) {
+      testAdminClient.createTopic(testTopicName, testTopicPartitionCount, testTopicReplicationFactor).get
+      while(!testAdminClient.isExistTopic(testTopicName)) {
+        testAdminClient.createTopic(testTopicName, testTopicPartitionCount, testTopicReplicationFactor).get
+        Thread.sleep(500)
+      }
+    }
+  }
+
+  def deleteTestTopic(): Unit = {
+    if (testAdminClient.isExistTopic(testTopicName)) {
+      testAdminClient.deleteTopic(testTopicName).get
+      while(testAdminClient.isExistTopic(testTopicName)) {
+        testAdminClient.deleteTopic(testTopicName).get
+        Thread.sleep(500)
+      }
+    }
   }
 }

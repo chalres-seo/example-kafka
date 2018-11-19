@@ -1,61 +1,67 @@
-package com.example.kafka.consumer
-
-import java.lang
-import java.time.{Duration => JDuration}
-
-import com.typesafe.scalalogging.LazyLogging
-import org.apache.kafka.clients.consumer.{ConsumerRecord, MockConsumer, OffsetResetStrategy}
-import org.apache.kafka.common.TopicPartition
-import org.hamcrest.CoreMatchers.is
-import org.junit.{Assert, Test}
-
-import scala.collection.JavaConversions._
-
-class TestMockConsumerWorker extends LazyLogging {
-  private val testTopicName: String = "test"
-  private val testTopicPartitionCount = 3
-  private val testRecordCount = 10
-
-  private val testRecordSet: Vector[ConsumerRecord[String, String]] = (1 to testRecordCount)
-    .map(index => new ConsumerRecord[String, String](testTopicName,
-      index % testTopicPartitionCount,
-      index - 1,
-      s"key-$index",
-      s"value-$index"))
-    .toVector
-
-
-  @Test
-  def testMockConsumer(): Unit = {
-
-    val mockConsumer = this.setupMockConsumer
-
-    val consumeRecords = mockConsumer.poll(JDuration.ofMillis(3000))
-
-    Assert.assertThat(consumeRecords.count(), is(testRecordCount))
-  }
-
-
-  def setupMockConsumer: MockConsumer[String, String] = {
-    val mockKafkaConsumer: MockConsumer[String, String] = new MockConsumer[String, String](OffsetResetStrategy.LATEST)
-    val mockPartitions: Vector[TopicPartition] = this.createMockTopicPartition(testTopicName, testTopicPartitionCount)
-
-    mockKafkaConsumer.subscribe(Vector(testTopicName))
-    mockKafkaConsumer.rebalance(mockPartitions)
-    mockKafkaConsumer.updateBeginningOffsets(this.createMockPartitionsOffsets(mockPartitions, 0))
-
-    testRecordSet.foreach(mockKafkaConsumer.addRecord)
-    mockKafkaConsumer.addEndOffsets(this.createMockPartitionsOffsets(mockPartitions, 0))
-
-    mockKafkaConsumer.subscribe(Vector(testTopicName))
-    mockKafkaConsumer
-  }
-
-  def createMockTopicPartition(topicName: String, partitionCount: Int): Vector[TopicPartition] = {
-    (0 until partitionCount).map(new TopicPartition(topicName, _)).toVector
-  }
-
-  def createMockPartitionsOffsets(topicPartitions: Vector[TopicPartition], offset: Long): Map[TopicPartition, lang.Long] = {
-    topicPartitions.map(p => p -> long2Long(offset)).toMap
-  }
-}
+//package com.example.kafka.consumer
+//
+//import java.lang
+//import java.util.{Collections, Properties}
+//import java.util
+//
+//import com.example.kafka.producer.ProducerClient
+//import org.apache.kafka.clients.consumer.{ConsumerRecord, ConsumerRecords, MockConsumer, OffsetResetStrategy}
+//import org.apache.kafka.clients.producer.{MockProducer, ProducerRecord}
+//import org.apache.kafka.common.TopicPartition
+//import org.apache.kafka.common.serialization.StringDeserializer
+//import org.hamcrest.CoreMatchers._
+//import org.junit._
+//
+//import scala.annotation.tailrec
+//import scala.collection.JavaConverters._
+//import scala.collection.JavaConversions._
+//
+//class TestMockConsumerClient {
+//  val testTopicName = "test-mock-kafka-consumer"
+//  val testTopicPartitionCount = 3
+//  val testTopicReplicationFactor: Short = 3
+//
+//  val testConsumerRecordSetCount = 100
+//  val testConsumerRecordSet: Vector[ConsumerRecord[String, String]] =
+//    (1 to testConsumerRecordSetCount).map { i =>
+//      new ConsumerRecord(testTopicName, i % testTopicPartitionCount, i -1, s"key-$i", s"value-$i")
+//    }.toVector
+//
+//  val mockKafkaConsumer: MockConsumer[String, String] = this.createPreparedMockConsumer
+//  val mockConsumerClient = ConsumerClient(mockKafkaConsumer, new Properties())
+//
+//  @Test
+//  def testConsumeRecord(): Unit = {
+//    @tailrec
+//    def loop(consumerRecords: ConsumerRecords[String, String], result: util.Iterator[ConsumerRecord[String, String]]): util.Iterator[ConsumerRecord[String, String]] = {
+//      if (consumerRecords.isEmpty) {
+//        mockConsumerClient.offsetCommit()
+//        result
+//      } else {
+//        val nextResult = mockConsumerClient.consumeRecord
+//        mockConsumerClient.offsetCommitAsync()
+//        loop(nextResult, result ++ nextResult.iterator())
+//      }
+//    }
+//
+//    val result: ConsumerRecords[String, String] = mockConsumerClient.consumeRecord
+//    val consumeRecord: util.Iterator[ConsumerRecord[String, String]] = loop(result, result.iterator())
+//
+//    Assert.assertThat(consumeRecord.length, is(testConsumerRecordSetCount))
+//  }
+//
+//  def createPreparedMockConsumer: MockConsumer[String, String] = {
+//    val mockKafkaConsumer = new MockConsumer[String, String](OffsetResetStrategy.EARLIEST)
+//
+//    val mockPartitions: Vector[TopicPartition] = (0 until testTopicPartitionCount).map(new TopicPartition(testTopicName, _)).toVector
+//    val mockPartitionsOffsets: Map[TopicPartition, lang.Long] = mockPartitions.map(p => p -> long2Long(0L)).toMap
+//
+//    mockKafkaConsumer.subscribe(Collections.singleton(testTopicName))
+//    mockKafkaConsumer.rebalance(mockPartitions)
+//    mockKafkaConsumer.updateBeginningOffsets(mockPartitionsOffsets)
+//    testConsumerRecordSet.foreach(mockKafkaConsumer.addRecord)
+//    mockKafkaConsumer.addEndOffsets(mockPartitionsOffsets)
+//
+//    mockKafkaConsumer
+//  }
+//}
