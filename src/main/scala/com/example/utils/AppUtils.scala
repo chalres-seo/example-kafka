@@ -11,9 +11,12 @@ import scala.util.{Failure, Success, Try}
 object AppUtils extends LazyLogging {
 
   def writeFile(savePathString: String, records: Vector[String], append: Boolean) = {
+    logger.info(s"write to file. path: $savePathString, append: $append")
+
     val savePath = Paths.get(savePathString)
 
     if(Files.notExists(savePath)) {
+      logger.info("file path is no exist. create path.")
       Files.createDirectories(savePath.getParent)
     }
 
@@ -41,7 +44,7 @@ object AppUtils extends LazyLogging {
       }
     }
 
-    logger.debug("file flushing and close.")
+    logger.info("file flushing and close.")
     fileWriter.flush()
     fileWriter.close()
   }

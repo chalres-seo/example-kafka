@@ -61,12 +61,9 @@
   </appender>
 
   <root>
-    <level value="DEBUG"/>
+    <level value="trace"/>
     <appender-ref ref="file-info"/>
     <appender-ref ref="file-debug"/>
     <appender-ref ref="console-debug"/>
   </root>
-
-  <logger name="com.example" level="DEBUG" />
-
 </configuration>

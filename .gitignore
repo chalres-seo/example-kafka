@@ -57,4 +57,6 @@ hs_err_pid*
 logs/*
 out/
 temp/*
+example_source/*
+example_out/*
 example-kafka-v2-client.iml

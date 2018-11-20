@@ -49,9 +49,9 @@
   </appender>
 
   <root>
-    <level value="DEBUG"/>
-    <appender-ref ref="file-info"/>
+    <level value="debug"/>
     <appender-ref ref="file-debug"/>
+    <appender-ref ref="file-info"/>
     <appender-ref ref="console-info"/>
   </root>
 

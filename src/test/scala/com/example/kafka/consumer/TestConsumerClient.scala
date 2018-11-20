@@ -60,7 +60,7 @@ object TestConsumerClient {
 
   def produceTestRecordSet(): Unit = {
     testProducerClient
-      .produceRecords(testProduceRecordSet)
+      .sendProducerRecords(testProduceRecordSet)
       .foreach(_.get)
     Thread.sleep(3000)
   }

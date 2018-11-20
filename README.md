@@ -21,8 +21,8 @@ Apache Kafka is a distributed streaming platform. [[Kafka Introduction]]
 * [Kafka Admin Client API]
 * [Kafka Producer Client API]
 * [Kafka Consumer Client APi]
-* [Kafka Producer Worker]
-* [Kafka Consumer Worker]
+* Kafka Producer Worker
+* Kafka Consumer Worker
 
 ## Usage
 
@@ -56,6 +56,9 @@ Default consumer client properties read from kafka.consumer.props.file property 
 #### Producer Worker
 
 * Concept
+
+The worker waits for the ProducerRecord to arrive in the buffer and consume buffer ProducerReocrd and send it to kafka.
+
 * Constructor
 *
 *
@@ -63,14 +66,29 @@ Default consumer client properties read from kafka.consumer.props.file property 
 #### Consumer Worker
 
 * Concept
+
+The worker polling ConsumerRecords from kafka broker and produce ConsumerRecords to buffer.
+  
 * Constructor
 *
 *
 
 ## Kafka mini-cluster docker
 
-* sandbox kafka
+* Sandbox-kafka
+*
+*
 
+## Example
+
+#### Example source
+ 
+* iris : http://archive.ics.uci.edu/ml/datasets/Iris
+
+#### Example kafka client
+
+* com.example.ExampleKafkaClientAppMain
+* com.example.ExampleKafkaClientWorkerAppMain
 
 ## Build
 

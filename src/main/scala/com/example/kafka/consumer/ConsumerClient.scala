@@ -27,51 +27,42 @@ import scala.collection.JavaConversions._
   */
 class ConsumerClient[K, V](kafkaConsumer: Consumer[K, V], props: Properties) extends LazyLogging {
   private val defaultConsumeRecordOffsetCommitCallback = ConsumerClient.createDefaultConsumeRecordOffsetCommitCallBack
-  private val groupId = props.getProperty("group.id")
-  private val clientId = props.getProperty("client.id")
   private val consumerMetrics: KafkaMetrics = KafkaMetrics(kafkaConsumer.metrics())
+
   private val pollingWaitTimeMillis = props.getProperty("fetch.max.wait.ms", "500").toLong * 3L
 
-  def getGroupId: String = groupId
-  def getClientId: String = clientId
-  def getProps: Properties = this.props
+  def getGroupId: String = props.getProperty("group.id")
+  def getClientId: String = props.getProperty("client.id")
+
   def getMetrics: KafkaMetrics = this.consumerMetrics
 
   @throws[Exception]
   def subscribeTopic(name: String): Unit = {
     logger.info(s"subscribe topic. name: $name")
-
     kafkaConsumer.subscribe(Collections.singleton(name))
   }
 
   @throws[Exception]
   def unsubscribeAllTopic(): Unit = {
     logger.info("unsubscribe all topics.")
-
     kafkaConsumer.unsubscribe()
   }
 
   @throws[Exception]
   def getSubscribeTopicList: util.Set[String] = {
-    logger.info("get subscribe topic list.")
-
+    logger.debug("get subscribe topic list.")
     kafkaConsumer.subscription()
   }
 
   def getAssignmentTopicPartitionInfo: util.Set[TopicPartition] = {
-    logger.info("get assignment partition count.")
-
+    logger.debug("get assignment partition count.")
     kafkaConsumer.assignment()
   }
 
   @throws[Exception]
   def consumeRecord: ConsumerRecords[K, V] = {
-    logger.info(s"consume record. (wait time for polling is $pollingWaitTimeMillis mills.")
-
+    logger.debug(s"consume record. (wait time for polling is $pollingWaitTimeMillis mills.)")
     val consumerRecords = kafkaConsumer.poll(Duration.ofMillis(pollingWaitTimeMillis))
-
-    logger.info(s"consumed record count: ${consumerRecords.count()}")
-
     if (consumerRecords.count() > 0) {
       logger.info("consumed record metadata:\n\t" + s"${
         consumerRecords.partitions().map { p =>
@@ -82,21 +73,18 @@ class ConsumerClient[K, V](kafkaConsumer: Consumer[K, V], props: Properties) ext
     } else {
       logger.info("consumed record metadata: no consumed record.")
     }
-
     consumerRecords
   }
 
   @throws[Exception]
   def offsetCommit(): Unit = {
     logger.info("commit offset.")
-
     kafkaConsumer.commitSync()
   }
 
   @throws[Exception]
   def offsetCommitAsync(): Unit = {
     logger.info("async commit offset")
-
     kafkaConsumer.commitAsync(defaultConsumeRecordOffsetCommitCallback)
   }
 
@@ -115,7 +103,6 @@ class ConsumerClient[K, V](kafkaConsumer: Consumer[K, V], props: Properties) ext
   @throws[Exception]
   def close(): Unit = {
     logger.info("close kafka consumer client.")
-
     kafkaConsumer.close()
   }
 }
@@ -124,26 +111,13 @@ object ConsumerClient extends LazyLogging {
   private val defaultKafkaConsumerClientPrefix = AppConfig.getKafkaClientPrefix(KafkaClientType.consumer)
   private val kafkaConsumerClientIdNum = new AtomicInteger(1)
 
+  /** constructor */
   def apply[K, V](kafkaConsumer: Consumer[K, V], props: Properties): ConsumerClient[K, V] = {
-    logger.debug("create consumer client.")
+    logger.info("create [ConsumerClient].")
     new ConsumerClient(kafkaConsumer, props)
   }
 
-  def apply[K, V](props: Properties): ConsumerClient[K, V] = {
-    val copyProps = AppConfig.copyProperties(props)
-    this.setAutoIncrementDefaultClientId(copyProps)
-
-    this.apply(this.createKafkaConsumerClient[K, V](copyProps), copyProps)
-  }
-
-  def apply[K, V](props: Properties, groupId: String): ConsumerClient[K, V] = {
-    val copyProps = AppConfig.copyProperties(props)
-    copyProps.setProperty("group.id", groupId)
-    this.setAutoIncrementDefaultClientId(copyProps)
-
-    this.apply(this.createKafkaConsumerClient[K, V](copyProps), copyProps)
-  }
-
+  /** constructor overload */
   def apply[K, V](props: Properties, groupId: String, clientId: String): ConsumerClient[K, V] = {
     val copyProps = AppConfig.copyProperties(props)
     copyProps.setProperty("group.id", groupId)
@@ -152,24 +126,30 @@ object ConsumerClient extends LazyLogging {
     this.apply(this.createKafkaConsumerClient[K, V](copyProps), copyProps)
   }
 
+  /** constructor overload */
+  def apply[K, V](props: Properties, groupId: String): ConsumerClient[K, V] = {
+    this.apply(props, groupId, this.getAutoIncrementClientId(props))
+  }
+
+  /** constructor overload */
+  def apply[K, V](props: Properties): ConsumerClient[K, V] = {
+    this.apply(props, props.getProperty("group.id"), this.getAutoIncrementClientId(props))
+  }
+
   private def createKafkaConsumerClient[K, V](props: Properties): KafkaConsumer[K, V] = {
-    logger.info("create kafka consumer client.")
-    logger.info("kafka consumer client config:\n\t" + props.mkString("\n\t"))
+    logger.info("create [KafkaConsumer].")
+    logger.info("[KafkaConsumer] config:\n\t" + props.mkString("\n\t"))
 
     new KafkaConsumer[K, V](props)
   }
 
   def initOffset(): Unit = {
-    // offset handling when initialize consumer client
+    // offset handling when need initialize consumer client
     // delegate offset processing to the broker
   }
 
-  private def setAutoIncrementDefaultClientId(props: Properties): Unit = {
-    props.setProperty("client.id",
-      props.getOrDefault("client.id", defaultKafkaConsumerClientPrefix)
-        + "-" + kafkaConsumerClientIdNum.getAndIncrement())
-
-    logger.debug(s"set kafka consumer client id. client.id: ${props.getProperty("client.id")}")
+  private def getAutoIncrementClientId(props: Properties): String = {
+    props.getOrDefault("client.id", defaultKafkaConsumerClientPrefix) + "-" + kafkaConsumerClientIdNum.getAndIncrement()
   }
 
   private def createDefaultConsumeRecordOffsetCommitCallBack: OffsetCommitCallback = new OffsetCommitCallback {

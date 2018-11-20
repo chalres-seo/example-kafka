@@ -11,7 +11,7 @@ class TestProducerClient {
 
   @Test
   def testProduceRecords(): Unit = {
-    val result: Vector[RecordMetadata] = testProducerClient.produceRecords(testProduceRecordSet).map(_.get)
+    val result: Vector[RecordMetadata] = testProducerClient.sendProducerRecords(testProduceRecordSet).map(_.get)
     val resultMetaData: Vector[Map[String, String]] = result.map(ProducerClient.produceRecordMetadataToMap)
 
     Assert.assertThat(resultMetaData.length, is(testProduceRecordSetCount))

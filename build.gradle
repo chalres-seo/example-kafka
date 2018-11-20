@@ -55,8 +55,14 @@ dependencies {
     testCompile group: 'junit', name: 'junit', version: junitVersion
 }
 
-task(main, dependsOn: 'classes', type: JavaExec) {
-    main = 'com.example.apps.AppMain'
+task(client, dependsOn: 'classes', type: JavaExec) {
+    main = 'com.example.apps.ExampleKafkaClientAppMain'
+    classpath = sourceSets.main.runtimeClasspath
+    args '', ''
+}
+
+task(worker, dependsOn: 'classes', type: JavaExec) {
+    main = 'com.example.apps.ExampleKafkaClientWorkerAppMain'
     classpath = sourceSets.main.runtimeClasspath
     args '', ''
 }

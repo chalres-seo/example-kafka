@@ -14,8 +14,10 @@ import scala.collection.JavaConverters._
 
 /**
   * kafka producer client worker class.
-  * producer pattern worker using linked blocking queue
-  * 
+  *
+  * the worker waits for the [[ProducerRecord]] to arrive in the buffer.
+  * consume buffer [[ProducerRecord]] and send it to kafka.
+  *
   * @see [[ProducerClient]]
   *
   * @param producerClient producer client.
@@ -29,10 +31,10 @@ class ProducerWorker[K, V](producerClient: ProducerClient[K, V],
   private implicit val executionContext: ExecutionContextExecutor =
     producerWorkerExecutorService match {
       case Some(executorService) =>
-        logger.debug("use custom execution context.")
+        logger.info("use custom execution context.")
         ExecutionContext.fromExecutorService(executorService)
       case None =>
-        logger.debug("use global execution context.")
+        logger.info("use global execution context.")
         ExecutionContext.global
     }
 
@@ -41,7 +43,7 @@ class ProducerWorker[K, V](producerClient: ProducerClient[K, V],
 
   private val incompleteAsyncProducerRecordCount: AtomicLong = new AtomicLong(0)
 
-  /** thread safe only read */
+  /** for thread safe only read */
   @volatile private var workerIsRunning: Boolean = false
   @volatile private var workerIsShutDown: Boolean = false
   @volatile private var workerFuture: Future[Unit] = _
@@ -83,12 +85,6 @@ class ProducerWorker[K, V](producerClient: ProducerClient[K, V],
     logger.debug(s"set worker thread. before: $workerThread, thread: $thread")
     workerThread = thread
   }
-  private def clearWorkerThreadAndFuture(): Unit = {
-    logger.debug("clear worker thread and future.")
-    logger.debug(this.getWorkerFutureAndThreadStateString)
-    workerThread = null
-    workerFuture = null
-  }
 
   def addProducerRecord(record: ProducerRecord[K, V]): Boolean = {
     logger.debug(s"add produce record to buffer.")
@@ -102,8 +98,7 @@ class ProducerWorker[K, V](producerClient: ProducerClient[K, V],
         true
       } catch {
         case e: Exception =>
-          logger.error("failed putting record to buffer.")
-          logger.error(e.getMessage, e)
+          logger.error(s"failed putting record to buffer. msg: ${e.getMessage}")
           logger.error(s"failed record: ${record.toString}")
           false
       }
@@ -111,26 +106,28 @@ class ProducerWorker[K, V](producerClient: ProducerClient[K, V],
   }
 
   def addProducerRecords(records: Vector[ProducerRecord[K, V]]): Boolean = {
-    logger.debug(s"add producer records to buffer. record count: ${records.length}")
+    val totalRecordCount = records.length
+
+    logger.debug(s"add producer records to buffer. record count: $totalRecordCount")
     if (workerIsShutDown && workerIsRunning) {
       logger.error(s"worker is going to shutdown phase, can't add producer record to buffer. record count: ${records.length}")
       logger.error(s"failed producer records:\n\t" + records.mkString("\t\n"))
       false
     } else {
-      // user bulk insert. not thread safe.
+      // bulk insert is not thread safe.
       // producerRecordBuffer.addAll(records.asJava)
-      val putBufferRecordCount = records.map(this.addProducerRecord).count(_ == true)
-      logger.debug(s"The count of records successfully inserted into the buffer. record count: $putBufferRecordCount")
-      records.length == putBufferRecordCount
+      val succeedRecordCount = records.map(this.addProducerRecord).count(_ == true)
+
+      logger.debug(s"add producer records to buffer result. succeed records: $succeedRecordCount, total records: $totalRecordCount")
+      totalRecordCount == succeedRecordCount
     }
   }
 
   def start(): Unit = {
     if (workerIsRunning) {
-      logger.debug("producer worker already start.")
+      logger.error("producer worker already start.")
     } else {
-      logger.debug(s"producer worker start.")
-//      this.clearWorkerThreadAndFuture()
+      logger.info(s"producer worker start.")
 
       this.setWorkerRunningState(true)
       this.setWorkerFuture(loopTask)
@@ -138,7 +135,7 @@ class ProducerWorker[K, V](producerClient: ProducerClient[K, V],
   }
 
   private def loopTask: Future[Unit] = {
-    logger.debug("producer worker task loop start.")
+    logger.info("producer worker task loop start.")
     Future {
       this.setWorkerThread(Thread.currentThread())
       while (workerIsRunning) {
@@ -149,7 +146,7 @@ class ProducerWorker[K, V](producerClient: ProducerClient[K, V],
           case None => Unit
         }
       }
-      logger.debug(s"producer worker task loop stop.")
+      logger.info(s"producer worker task loop stop.")
       logger.debug(this.getWorkerRunningStateString)
       logger.debug(this.getWorkerFutureAndThreadStateString)
     }
@@ -169,49 +166,52 @@ class ProducerWorker[K, V](producerClient: ProducerClient[K, V],
     }
   }
 
-  private def sendToKafka(produceRecord: ProducerRecord[K, V]): Unit = {
-    logger.debug(s"record send to kafka by async. record: $produceRecord")
+  private def sendToKafka(producerRecord: ProducerRecord[K, V]): Unit = {
+    logger.debug(s"record send to kafka by async. record: $producerRecord")
     try {
-      // use custom callback.
+      // use when custom predefine callback.
       //producerClient.produceRecords(Vector(produceRecord), ProducerWorker.kafkaProducerCallback)
-      producerClient.produceRecords(Vector(produceRecord))
+      producerClient.sendProducerRecord(producerRecord)
     } catch {
       case e:Exception =>
         logger.error(e.getMessage)
-        logger.error(s"failed record send to kafka. record: $produceRecord", e)
+        logger.error(s"failed record send to kafka. record: $producerRecord", e)
     } finally {
       incompleteAsyncProducerRecordCount.decrementAndGet()
     }
   }
 
+  //private def bulkReadFromBuffer = {}
+  //private def sendToKafka(producerRecords: Vector[ProducerRecord[K, V]]) = {}
+
   def stop(): Future[Unit] = {
     Future {
-      logger.debug("producer worker stop.")
+      logger.info("producer worker stop.")
       this.setWorkerShutDownState(true)
       this.cleanUpBuffer()
 
       this.setWorkerRunningState(false)
       
       this.wakeUpWaitWorkerThread()
-      producerClient.flush
+      producerClient.flush()
 
       this.shutdownHook()
-      logger.debug("producer worker stopped.")
+      logger.info("producer worker stopped.")
     }
   }
 
   private def cleanUpBuffer(): Unit = {
-    logger.debug("clean up remaining records in buffer.")
+    logger.info("clean up remaining records in buffer.")
     while (!producerRecordBuffer.isEmpty) {
       logger.debug(this.getWorkerFutureAndThreadStateString)
       logger.debug(s"wait ${ProducerWorker.remainRecordInBufferWaitMillis} millis for clean up remain record in buffer. buffer size: ${this.getBufferSize}")
       Thread.sleep(ProducerWorker.remainRecordInBufferWaitMillis)
     }
-    logger.debug(s"buffer clean up complete. buffer size: ${this.getBufferSize}")
+    logger.info(s"buffer clean up complete. buffer size: ${this.getBufferSize}")
   }
   
   private def cleanUpIncompleteAsyncProducerRecord(): Unit = {
-    logger.debug("clean up incomplete producer record.")
+    logger.info("clean up incomplete producer record.")
     while (!workerFuture.isCompleted || incompleteAsyncProducerRecordCount.get() != 0) {
       try {
         logger.debug(this.getWorkerFutureAndThreadStateString)
@@ -224,7 +224,7 @@ class ProducerWorker[K, V](producerClient: ProducerClient[K, V],
           logger.error("wait for complete already producer record is interrupted.", e)
       }
     }
-    logger.debug(s"incomplete producer record clean up complete. count: $incompleteAsyncProducerRecordCount")
+    logger.info(s"incomplete producer record clean up complete. count: $incompleteAsyncProducerRecordCount")
   }
 
   private def wakeUpWaitWorkerThread(): Unit = {
@@ -236,19 +236,17 @@ class ProducerWorker[K, V](producerClient: ProducerClient[K, V],
   }
 
   def close(): Unit = {
-    logger.debug("producer close")
     if (workerIsRunning) {
-      logger.error("worker is running. can't close producer.")
+      logger.error("worker is running. can't close kafka producer.")
     } else {
       producerClient.close()
-      logger.debug("producer close complete.")
     }
   }
   
   private def shutdownHook(): Unit = {
-    logger.debug("producer worker shutdown hook start.")
+    logger.info("producer worker shutdown hook start.")
     this.cleanUpIncompleteAsyncProducerRecord()
-    logger.debug("producer worker shutdown complete.")
+    logger.info("producer worker shutdown complete.")
   }
   
   private def getWorkerFutureAndThreadStateString: String = {
@@ -271,25 +269,28 @@ object ProducerWorker extends LazyLogging {
   private val incompleteAsyncProducerRecordWaitMillis: Long = 3000L
   private val remainRecordInBufferWaitMillis: Long = 1000L
 
-  // use custom callback.
+  // use when custom predefine callback.
   private lazy val kafkaProducerCallback = this.createProducerCallBack
 
-  /** producer worker constructor */
+  /** constructor */
   def apply[K, V](producerClient: ProducerClient[K, V],
                   props: Properties,
                   useGlobalExecutionContext: Boolean): ProducerWorker[K, V] = {
-    logger.debug(s"create producer worker. use global execution context: $useGlobalExecutionContext")
+    logger.info(s"create producer worker. use global execution context: $useGlobalExecutionContext")
     new ProducerWorker(producerClient, if (useGlobalExecutionContext) None else Option(producerWorkerExecutorService))
   }
 
+  /** constructor overload */
   def apply[K, V](producerClient: ProducerClient[K, V], props: Properties): ProducerWorker[K, V] = {
     this.apply(producerClient, props, useGlobalExecutionContext = true)
   }
 
+  /** constructor overload */
   def apply[K, V](props: Properties, useGlobalExecutionContext: Boolean): ProducerWorker[K, V] = {
     this.apply(this.createProducerClient[K, V](props), props, useGlobalExecutionContext)
   }
 
+  /** constructor overload */
   def apply[K, V](props: Properties): ProducerWorker[K, V] = {
     this.apply(this.createProducerClient[K, V](props), props, useGlobalExecutionContext = true)
   }
@@ -300,15 +301,10 @@ object ProducerWorker extends LazyLogging {
   }
 
   private def recordMetadataToMap(recordMetadata: RecordMetadata): Map[String, Any] = {
-    Map(
-      "offset" -> recordMetadata.offset(),
-      "partition" -> recordMetadata.partition(),
-      "timestamp" -> recordMetadata.timestamp(),
-      "topic" -> recordMetadata.topic()
-    )
+    ProducerClient.produceRecordMetadataToMap(recordMetadata)
   }
 
-  // use custom callback.
+  // use when custom predefine callback.
   private def createProducerCallBack: Callback = new Callback() {
     override def onCompletion(metadata: RecordMetadata, exception: Exception): Unit = {
       if (exception == null) {
@@ -322,12 +318,12 @@ object ProducerWorker extends LazyLogging {
   }
 
   private def createCustomExecutorService: ExecutorService = {
-    logger.debug(s"create custom stealing executor service. pool size: ${AppConfig.DEFAULT_EXECUTOR_SERVICE_THREAD_COUNT}")
+    logger.info(s"create custom stealing executor service. pool size: ${AppConfig.DEFAULT_EXECUTOR_SERVICE_THREAD_COUNT}")
     Executors.newWorkStealingPool(AppConfig.DEFAULT_EXECUTOR_SERVICE_THREAD_COUNT)
   }
 
   def terminateCustomExecutorService(): Unit = {
-    logger.debug("terminate custom stealing executor service")
+    logger.info("terminate custom stealing executor service")
     this.producerWorkerExecutorService.shutdown()
     this.producerWorkerExecutorService.awaitTermination(30L, TimeUnit.SECONDS)
   }
