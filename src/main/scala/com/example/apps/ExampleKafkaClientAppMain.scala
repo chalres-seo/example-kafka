@@ -23,8 +23,8 @@ import scala.collection.JavaConversions._
   *
   * step:
   * 1. read iris string data from file (produceDataSetPath)
-  * 2. produce read iris string data (produce topic name: example.string.iris)
-  * 3. consume iris string data (consume topic name: example.string.iris)
+  * 2. produce read iris string data every 3 seconds for 20 seconds (produce topic name: example.string.iris)
+  * 3. consume iris string data every 3secons for 30 seconds (consume topic name: example.string.iris)
   * 4. write consume data to file (consumeDataSetPath)
   *
   */
@@ -52,7 +52,6 @@ object ExampleKafkaClientAppMain extends LazyLogging {
 
   def main(args: Array[String]): Unit = {
     logger.info("start example kafka client app main.")
-
     this.prepareExample()
 
     val consumerTaskFuture: Future[Unit] = this.startConsumerTask(3000L, 30000L)
@@ -67,8 +66,8 @@ object ExampleKafkaClientAppMain extends LazyLogging {
 
     logger.info("wait cleanup completed future.")
     Thread.sleep(3000)
-    this.cleanUpExample()
 
+    this.cleanUpExample()
     logger.info("finish example kafka client app main.")
   }
 

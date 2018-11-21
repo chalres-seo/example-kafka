@@ -56,7 +56,7 @@ class ProducerWorker[K, V](producerClient: ProducerClient[K, V],
     producerRecordBuffer.size()
   }
 
-  def bufferIsEmpty: Boolean = {
+  def isBufferEmpty: Boolean = {
     logger.debug(s"check buffer is empty. value: ${this.producerRecordBuffer.isEmpty}")
     this.producerRecordBuffer.isEmpty
   }
@@ -86,7 +86,8 @@ class ProducerWorker[K, V](producerClient: ProducerClient[K, V],
     workerThread = thread
   }
 
-  def addProducerRecord(record: ProducerRecord[K, V]): Boolean = {
+  def offerProducerRecordToBuffer(record: ProducerRecord[K, V],
+                                  waitTimeMillis: Long = ProducerWorker.offerBufferWaitMillis): Boolean = {
     logger.debug(s"add produce record to buffer.")
     if (workerIsShutDown && workerIsRunning) {
       logger.error(s"worker is not running state or going to shutdown phase, can't add more producer record to buffer.")
@@ -94,18 +95,19 @@ class ProducerWorker[K, V](producerClient: ProducerClient[K, V],
       false
     } else {
       try {
-        producerRecordBuffer.put(record)
+        producerRecordBuffer.offer(record, waitTimeMillis, TimeUnit.MILLISECONDS)
         true
       } catch {
         case e: Exception =>
-          logger.error(s"failed putting record to buffer. msg: ${e.getMessage}")
+          logger.error(s"failed putting record to buffer. msg: ${e.getMessage}", e)
           logger.error(s"failed record: ${record.toString}")
           false
       }
     }
   }
 
-  def addProducerRecords(records: Vector[ProducerRecord[K, V]]): Boolean = {
+  def offerProducerRecordsToBuffer(records: Vector[ProducerRecord[K, V]],
+                                   waitTimeMillis: Long = ProducerWorker.offerBufferWaitMillis): Boolean = {
     val totalRecordCount = records.length
 
     logger.debug(s"add producer records to buffer. record count: $totalRecordCount")
@@ -116,8 +118,7 @@ class ProducerWorker[K, V](producerClient: ProducerClient[K, V],
     } else {
       // bulk insert is not thread safe.
       // producerRecordBuffer.addAll(records.asJava)
-      val succeedRecordCount = records.map(this.addProducerRecord).count(_ == true)
-
+      val succeedRecordCount = records.map(record => this.offerProducerRecordToBuffer(record, waitTimeMillis)).count(_ == true)
       logger.debug(s"add producer records to buffer result. succeed records: $succeedRecordCount, total records: $totalRecordCount")
       totalRecordCount == succeedRecordCount
     }
@@ -155,13 +156,13 @@ class ProducerWorker[K, V](producerClient: ProducerClient[K, V],
   private def readFromBuffer: Option[ProducerRecord[K, V]] = {
     logger.debug("take producer record from queue.")
     try {
-      Option(producerRecordBuffer.take())
+      Option(producerRecordBuffer.poll(ProducerWorker.pollBufferWaitMillis, TimeUnit.MILLISECONDS))
     } catch {
-      case _:InterruptedException =>
-        logger.debug("worker thread is wake up.")
+      case e:InterruptedException =>
+        logger.warn(s"worker thread is wake up. msg: ${e.getMessage}")
         None
       case e:Exception =>
-        logger.error("failed take producer record from queue.", e)
+        logger.error(s"failed take producer record from queue. msg: ${e.getMessage}", e)
         None
     }
   }
@@ -174,8 +175,7 @@ class ProducerWorker[K, V](producerClient: ProducerClient[K, V],
       producerClient.sendProducerRecord(producerRecord)
     } catch {
       case e:Exception =>
-        logger.error(e.getMessage)
-        logger.error(s"failed record send to kafka. record: $producerRecord", e)
+        logger.error(s"failed record send to kafka. msg: ${e.getMessage}, record: $producerRecord", e)
     } finally {
       incompleteAsyncProducerRecordCount.decrementAndGet()
     }
@@ -187,16 +187,21 @@ class ProducerWorker[K, V](producerClient: ProducerClient[K, V],
   def stop(): Future[Unit] = {
     Future {
       logger.info("producer worker stop.")
+
+      // set worker thread shutdown flag. worker is still running but no more accept produce record.
       this.setWorkerShutDownState(true)
+
       this.cleanUpBuffer()
 
+      // worker is no more running.
       this.setWorkerRunningState(false)
-      
-      this.wakeUpWaitWorkerThread()
-      producerClient.flush()
 
+      // wake up blocked worker.
+      this.wakeUpWaitWorkerThread()
+
+      this.cleanUpIncompleteAsyncProducerRecord()
       this.shutdownHook()
-      logger.info("producer worker stopped.")
+      logger.info("producer worker stop complete.")
     }
   }
 
@@ -207,7 +212,9 @@ class ProducerWorker[K, V](producerClient: ProducerClient[K, V],
       logger.debug(s"wait ${ProducerWorker.remainRecordInBufferWaitMillis} millis for clean up remain record in buffer. buffer size: ${this.getBufferSize}")
       Thread.sleep(ProducerWorker.remainRecordInBufferWaitMillis)
     }
-    logger.info(s"buffer clean up complete. buffer size: ${this.getBufferSize}")
+
+    this.flush()
+    logger.info(s"clean up buffer complete. buffer size: ${this.getBufferSize}")
   }
   
   private def cleanUpIncompleteAsyncProducerRecord(): Unit = {
@@ -221,7 +228,7 @@ class ProducerWorker[K, V](producerClient: ProducerClient[K, V],
         Thread.sleep(ProducerWorker.incompleteAsyncProducerRecordWaitMillis)
       } catch {
         case e:Exception =>
-          logger.error("wait for complete already producer record is interrupted.", e)
+          logger.error(s"wait for complete already producer record is interrupted. msg: ${e.getMessage}", e)
       }
     }
     logger.info(s"incomplete producer record clean up complete. count: $incompleteAsyncProducerRecordCount")
@@ -235,6 +242,8 @@ class ProducerWorker[K, V](producerClient: ProducerClient[K, V],
     }
   }
 
+  def flush() = producerClient.flush()
+
   def close(): Unit = {
     if (workerIsRunning) {
       logger.error("worker is running. can't close kafka producer.")
@@ -245,7 +254,9 @@ class ProducerWorker[K, V](producerClient: ProducerClient[K, V],
   
   private def shutdownHook(): Unit = {
     logger.info("producer worker shutdown hook start.")
-    this.cleanUpIncompleteAsyncProducerRecord()
+
+    // here for before shutdown
+
     logger.info("producer worker shutdown complete.")
   }
   
@@ -266,33 +277,38 @@ class ProducerWorker[K, V](producerClient: ProducerClient[K, V],
 object ProducerWorker extends LazyLogging {
   private lazy val producerWorkerExecutorService = this.createCustomExecutorService
 
-  private val incompleteAsyncProducerRecordWaitMillis: Long = 3000L
-  private val remainRecordInBufferWaitMillis: Long = 1000L
+  private val DEFAULT_WAIT_MILLIS = 3000L
+
+  private val incompleteAsyncProducerRecordWaitMillis: Long = DEFAULT_WAIT_MILLIS
+  private val remainRecordInBufferWaitMillis: Long = DEFAULT_WAIT_MILLIS
+
+  private val pollBufferWaitMillis = DEFAULT_WAIT_MILLIS
+  private val offerBufferWaitMillis = DEFAULT_WAIT_MILLIS
+
 
   // use when custom predefine callback.
   private lazy val kafkaProducerCallback = this.createProducerCallBack
 
   /** constructor */
   def apply[K, V](producerClient: ProducerClient[K, V],
-                  props: Properties,
                   useGlobalExecutionContext: Boolean): ProducerWorker[K, V] = {
     logger.info(s"create producer worker. use global execution context: $useGlobalExecutionContext")
     new ProducerWorker(producerClient, if (useGlobalExecutionContext) None else Option(producerWorkerExecutorService))
   }
 
   /** constructor overload */
-  def apply[K, V](producerClient: ProducerClient[K, V], props: Properties): ProducerWorker[K, V] = {
-    this.apply(producerClient, props, useGlobalExecutionContext = true)
+  def apply[K, V](producerClient: ProducerClient[K, V]): ProducerWorker[K, V] = {
+    this.apply(producerClient, useGlobalExecutionContext = true)
   }
 
   /** constructor overload */
   def apply[K, V](props: Properties, useGlobalExecutionContext: Boolean): ProducerWorker[K, V] = {
-    this.apply(this.createProducerClient[K, V](props), props, useGlobalExecutionContext)
+    this.apply(this.createProducerClient[K, V](props), useGlobalExecutionContext)
   }
 
   /** constructor overload */
   def apply[K, V](props: Properties): ProducerWorker[K, V] = {
-    this.apply(this.createProducerClient[K, V](props), props, useGlobalExecutionContext = true)
+    this.apply(this.createProducerClient[K, V](props), useGlobalExecutionContext = true)
   }
 
   /** producer client factory api */

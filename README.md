@@ -75,30 +75,34 @@ The worker polling ConsumerRecords from kafka broker and produce ConsumerRecords
 
 ## Kafka mini-cluster docker
 
+* Sandbox-centos-openjdk8
 * Sandbox-kafka
-*
-*
+
+
+## Build with test
+
+./gradlew build
 
 ## Example
 
 #### Example source
  
-* iris : http://archive.ics.uci.edu/ml/datasets/Iris
+* iris data : http://archive.ics.uci.edu/ml/datasets/Iris
 
-#### Example kafka client
+#### Example out
+
+* ./example_out/iris.consume.{yyyy-MM-dd_HH:mm:ss} 
+
+#### Example app main
 
 * com.example.ExampleKafkaClientAppMain
 * com.example.ExampleKafkaClientWorkerAppMain
 
-## Build
-
-#### Build skip test
-
-## Test run
-
 #### Run example by gradle
 
-#### Run example by jar
+* ExampleKafkaClientAppMain : ./gradlew task api
+* ExampleKafkaClientWorkerAppMain : ./gradlew task worker
+
 
 [Kafka]: https://kafka.apache.org/
 [Kafka Introduction]: https://kafka.apache.org/intro.html

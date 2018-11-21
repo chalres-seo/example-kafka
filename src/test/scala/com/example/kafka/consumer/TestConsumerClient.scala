@@ -55,59 +55,51 @@ object TestConsumerClient {
     }.toVector
 
   val testKafkaAdmin = AdminClient(AppConfig.createDefaultKafkaAdminProps)
-  val testProducerClient: ProducerClient[Any, Any] = ProducerClient[Any, Any](AppConfig.createDefaultKafkaProducerProps)
-  var testConsumerClient: ConsumerClient[Any, Any] = _
+  val testConsumerClient: ConsumerClient[Any, Any] = ConsumerClient(AppConfig.createDefaultKafkaConsumerProps)
 
   def produceTestRecordSet(): Unit = {
+    val testProducerClient: ProducerClient[Any, Any] = ProducerClient[Any, Any](AppConfig.createDefaultKafkaProducerProps)
+
     testProducerClient
       .sendProducerRecords(testProduceRecordSet)
       .foreach(_.get)
     Thread.sleep(3000)
+
+    testProducerClient.close()
   }
 
   @BeforeClass
   def beforeClass(): Unit = {
-    testConsumerClient = ConsumerClient(AppConfig.createDefaultKafkaConsumerProps)
-
-    this.deleteTestTopic
-    this.createTestTopic
+    this.createTestTopic()
   }
 
   @AfterClass
   def tearDownClass(): Unit = {
     testConsumerClient.close()
 
-    this.deleteTestTopic
-
+    this.deleteTestTopic()
     testKafkaAdmin.close()
-    testProducerClient.close()
   }
 
-  def createTestTopic = {
+  def createTestTopic(): Unit = {
     if (!testKafkaAdmin.isExistTopic(testTopicName)) {
       testKafkaAdmin.createTopic(testTopicName, testTopicPartitionCount, testTopicReplicationFactor).get
 
       while(!testKafkaAdmin.isExistTopic(testTopicName)) {
-        testKafkaAdmin.createTopic(testTopicName, testTopicPartitionCount, testTopicReplicationFactor).get
         Thread.sleep(500)
+        testKafkaAdmin.createTopic(testTopicName, testTopicPartitionCount, testTopicReplicationFactor).get
       }
     }
   }
 
-  def deleteTestTopic = {
+  def deleteTestTopic(): Unit = {
     if (testKafkaAdmin.isExistTopic(testTopicName)) {
       testKafkaAdmin.deleteTopic(testTopicName).get
 
       while(testKafkaAdmin.isExistTopic(testTopicName)) {
-        testKafkaAdmin.deleteTopic(testTopicName).get
         Thread.sleep(500)
+        testKafkaAdmin.deleteTopic(testTopicName).get
       }
     }
-  }
-
-  def closeResource = {
-    testKafkaAdmin.close()
-    testProducerClient.close()
-    testConsumerClient.close()
   }
 }

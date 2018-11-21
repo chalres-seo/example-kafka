@@ -40,9 +40,9 @@ object TestProducerClient {
 
   @AfterClass
   def tearDownClass(): Unit = {
-    this.deleteTestTopic()
-
     testProducerClient.close()
+
+    this.deleteTestTopic()
     testAdminClient.close()
   }
 
@@ -50,8 +50,8 @@ object TestProducerClient {
     if (!testAdminClient.isExistTopic(testTopicName)) {
       testAdminClient.createTopic(testTopicName, testTopicPartitionCount, testTopicReplicationFactor).get
       while(!testAdminClient.isExistTopic(testTopicName)) {
-        testAdminClient.createTopic(testTopicName, testTopicPartitionCount, testTopicReplicationFactor).get
         Thread.sleep(500)
+        testAdminClient.createTopic(testTopicName, testTopicPartitionCount, testTopicReplicationFactor).get
       }
     }
   }
@@ -60,8 +60,8 @@ object TestProducerClient {
     if (testAdminClient.isExistTopic(testTopicName)) {
       testAdminClient.deleteTopic(testTopicName).get
       while(testAdminClient.isExistTopic(testTopicName)) {
-        testAdminClient.deleteTopic(testTopicName).get
         Thread.sleep(500)
+        testAdminClient.deleteTopic(testTopicName).get
       }
     }
   }

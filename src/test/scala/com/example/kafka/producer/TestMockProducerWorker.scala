@@ -30,11 +30,10 @@ class TestMockProducerWorker extends LazyLogging {
     val emptyProperties = new Properties()
 
     val mockProducerClient: ProducerClient[String, String] = ProducerClient(mockKafkaProducer, emptyProperties)
-
-    val producerWorker = ProducerWorker(mockProducerClient, emptyProperties)
+    val producerWorker = ProducerWorker(mockProducerClient)
 
     producerWorker.start()
-    producerWorker.addProducerRecords(testRecordSet1000)
+    producerWorker.offerProducerRecordsToBuffer(testRecordSet1000)
     Await.result(producerWorker.stop(), Duration.Inf)
 
     Assert.assertThat(mockKafkaProducer.history().size(), is(testRecordSet1000.size))

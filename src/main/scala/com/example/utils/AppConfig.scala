@@ -48,7 +48,7 @@ object AppConfig extends LazyLogging {
     logger.debug("copy properties.")
 
     val newProperties = new Properties()
-    sourceProps.propertyNames().foreach(name => newProperties.put(name, sourceProps.get(name)))
+    sourceProps.propertyNames().foreach(name => newProperties.put(name.toString, sourceProps.get(name)))
 
     newProperties
   }

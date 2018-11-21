@@ -4,13 +4,13 @@ import java.time.{Duration => JDuration}
 import java.util.Collections
 
 import com.example.kafka.admin.AdminClient
-import com.example.kafka.consumer.{ConsumerClient, TestConsumerClient}
-import org.apache.kafka.clients.producer.{ProducerRecord, RecordMetadata}
+import com.example.kafka.consumer.ConsumerClient
+import org.apache.kafka.clients.producer.ProducerRecord
 import org.junit._
 import org.hamcrest.CoreMatchers._
 import com.example.kafka.producer.TestProducerWorker._
 import com.example.utils.AppConfig
-import org.apache.kafka.clients.consumer.{ConsumerRecord, ConsumerRecords, KafkaConsumer}
+import org.apache.kafka.clients.consumer.{ConsumerRecord, KafkaConsumer}
 
 import scala.annotation.tailrec
 import scala.concurrent.Await
@@ -25,16 +25,19 @@ class TestProducerWorker {
     val producerWorker = ProducerWorker[Any, Any](AppConfig.createDefaultKafkaProducerProps, true)
 
     producerWorker.start()
-    producerWorker.addProducerRecords(testProduceRecordSet)
+    producerWorker.offerProducerRecordsToBuffer(testProduceRecordSet)
+
     Await.result(producerWorker.stop(), Duration.Inf)
+    producerWorker.close()
 
     val result = this.consumeFromBeginning(testTopicName)
 
     Assert.assertThat(result.length, is(testProduceRecordSetCount))
+
   }
 
   def consumeFromBeginning(topicName: String): Vector[ConsumerRecord[String, String]] = {
-    val kafkaConsumer: KafkaConsumer[String, String] = new KafkaConsumer[String, String](AppConfig.DEFAULT_KAFKA_CONSUMER_PROPS)
+    val kafkaConsumer: KafkaConsumer[String, String] = new KafkaConsumer[String, String](AppConfig.createDefaultKafkaConsumerProps)
 
     kafkaConsumer.subscribe(Collections.singletonList(testTopicName))
     kafkaConsumer.poll(JDuration.ofMillis(1000))
@@ -71,7 +74,6 @@ object TestProducerWorker {
     }.toVector
 
   val testAdminClient = AdminClient(AppConfig.createDefaultKafkaAdminProps)
-  val testConsumerClient = ConsumerClient(AppConfig.createDefaultKafkaConsumerProps)
 
   @BeforeClass
   def beforeClass(): Unit = {
@@ -80,8 +82,8 @@ object TestProducerWorker {
 
   @AfterClass
   def tearDownClass(): Unit = {
-    this.deleteTestTopic()
 
+    this.deleteTestTopic()
     testAdminClient.close()
   }
 
