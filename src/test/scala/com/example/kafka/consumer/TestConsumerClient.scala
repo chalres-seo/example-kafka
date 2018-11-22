@@ -44,18 +44,18 @@ class TestConsumerClient {
 }
 
 object TestConsumerClient {
-  val testTopicName = "test-kafka-consumer"
-  val testTopicPartitionCount = 3
-  val testTopicReplicationFactor: Short = 3
+  private val testTopicName = "test-kafka-consumer"
+  private val testTopicPartitionCount = 3
+  private val testTopicReplicationFactor: Short = 3
 
-  val testProduceRecordSetCount = 100
-  val testProduceRecordSet: Vector[ProducerRecord[Any, Any]] =
+  private val testProduceRecordSetCount = 100
+  private val testProduceRecordSet: Vector[ProducerRecord[Any, Any]] =
     (1 to testProduceRecordSetCount).map { i =>
       new ProducerRecord(testTopicName, s"key-$i".asInstanceOf[Any], s"value-$i".asInstanceOf[Any])
     }.toVector
 
-  val testKafkaAdmin = AdminClient(AppConfig.createDefaultKafkaAdminProps)
-  val testConsumerClient: ConsumerClient[Any, Any] = ConsumerClient(AppConfig.createDefaultKafkaConsumerProps)
+  private val testKafkaAdmin = AdminClient(AppConfig.createDefaultKafkaAdminProps)
+  private val testConsumerClient: ConsumerClient[Any, Any] = ConsumerClient(AppConfig.createDefaultKafkaConsumerProps)
 
   def produceTestRecordSet(): Unit = {
     val testProducerClient: ProducerClient[Any, Any] = ProducerClient[Any, Any](AppConfig.createDefaultKafkaProducerProps)

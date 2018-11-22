@@ -63,17 +63,17 @@ class TestProducerWorker {
 }
 
 object TestProducerWorker {
-  val testTopicName = "test-kafka-producer-worker"
-  val testTopicPartitionCount = 3
-  val testTopicReplicationFactor: Short = 3
+  private val testTopicName = "test-kafka-producer-worker"
+  private val testTopicPartitionCount = 3
+  private val testTopicReplicationFactor: Short = 3
 
-  val testProduceRecordSetCount = 100
-  val testProduceRecordSet: Vector[ProducerRecord[Any, Any]] =
+  private val testProduceRecordSetCount = 100
+  private  val testProduceRecordSet: Vector[ProducerRecord[Any, Any]] =
     (1 to testProduceRecordSetCount).map { i =>
       new ProducerRecord(testTopicName, s"key-$i".asInstanceOf[Any], s"value-$i".asInstanceOf[Any])
     }.toVector
 
-  val testAdminClient = AdminClient(AppConfig.createDefaultKafkaAdminProps)
+  private val testAdminClient = AdminClient(AppConfig.createDefaultKafkaAdminProps)
 
   @BeforeClass
   def beforeClass(): Unit = {
